@@ -87,7 +87,10 @@ const schema = a.schema({
       campaignRunId: a.string().required(),
     })
     .returns(a.json())
-    .authorization((allow) => [allow.authenticated()])
+    .authorization((allow) => [
+      allow.authenticated(),
+      allow.publicApiKey(), 
+    ])
     .handler(a.handler.function(dispatchBroadcast)),
 
   // Mutation 2: Chat with Campaign Agent

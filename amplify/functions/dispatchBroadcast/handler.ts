@@ -4,78 +4,104 @@ import { SQSClient, SendMessageBatchCommand } from "@aws-sdk/client-sqs";
 const ddb = new DynamoDBClient({});
 const sqs = new SQSClient({});
 
+const TABLE_NAME = process.env.TABLE_NAME!;
+const QUEUE_URL = process.env.OUTBOUND_QUEUE_URL!;
+
 export const handler = async (event: any) => {
-  console.log("Triggered broadcast with event:", JSON.stringify(event.arguments));
+  console.log("Triggered broadcast event arguments:", JSON.stringify(event.arguments));
   
-  // AppSync arguments from the triggerCampaignBroadcast mutation
   const { associationId, campaignRunId } = event.arguments;
 
-  const tableName = process.env.TABLE_NAME!;
-  const queueUrl = process.env.OUTBOUND_QUEUE_URL!;
+  if (!associationId || !campaignRunId) {
+    throw new Error("Missing required arguments: associationId or campaignRunId");
+  }
 
   let lastEvaluatedKey = undefined;
   const targetMembers: any[] = [];
 
   try {
-    // 1. Query PushNotSystem table for all members of this campaign
-    // Key pattern: pk = campaignRunId, sk begins with "MEMBER#"
+    // -----------------------------------------------------------------
+    // 1. QUERY PushNotSystem FOR ALL RECIPIENTS
+    // -----------------------------------------------------------------
     do {
       const queryCmd: QueryCommand = new QueryCommand({
-        TableName: tableName,
+        TableName: TABLE_NAME,
         KeyConditionExpression: "pk = :pk AND begins_with(sk, :sk)",
         ExpressionAttributeValues: {
           ":pk": { S: campaignRunId },
-          ":sk": { S: "MEMBER#" }
+          ":sk": { S: "MEMBER#" },
         },
-        ExclusiveStartKey: lastEvaluatedKey
+        ExclusiveStartKey: lastEvaluatedKey,
       });
 
       const response = await ddb.send(queryCmd);
-      if (response.Items) {
+      if (response.Items && response.Items.length > 0) {
         targetMembers.push(...response.Items);
       }
       lastEvaluatedKey = response.LastEvaluatedKey;
     } while (lastEvaluatedKey);
 
-    console.log(`Found ${targetMembers.length} members for campaign ${campaignRunId}. Queueing...`);
+    console.log(`Discovered ${targetMembers.length} recipients for campaign ${campaignRunId}. Processing SQS buffer...`);
 
-    // 2. Chunk members into batches of 10 (Maximum allowed by SQS SendMessageBatch)
-    const batches = [];
-    for (let i = 0; i < targetMembers.length; i += 10) {
-      batches.push(targetMembers.slice(i, i + 10));
+    if (targetMembers.length === 0) {
+      return {
+        status: "EMPTY",
+        queuedCount: 0,
+        campaignRunId,
+      };
     }
 
-    let messagesQueued = 0;
+    // -----------------------------------------------------------------
+    // 2. CHUNK INTO MAXIMUM SQS BATCHES (10 items max per batch)
+    // -----------------------------------------------------------------
+    const BATCH_SIZE = 10;
+    let totalQueued = 0;
 
-    // 3. Push to the Outbound SQS Buffer
-    for (const batch of batches) {
-      const entries = batch.map((member, index) => ({
-        // Id must be unique within the batch request
-        Id: `msg_${Date.now()}_${index}`,
-        MessageBody: JSON.stringify({
-          associationId: associationId,
-          campaignRunId: campaignRunId,
-          memberPhoneSk: member.sk.S
+    for (let i = 0; i < targetMembers.length; i += BATCH_SIZE) {
+      const chunk = targetMembers.slice(i, i + BATCH_SIZE);
+
+      const entries = chunk.map((member, idx) => {
+        const rawSk = member.sk?.S || "";
+        const cleanPhone = rawSk.replace(/^MEMBER#/, "");
+        const customName = member.name?.S || "";
+        const templateName = member.templateName?.S || "hello_world";
+
+        return {
+          Id: `msg_${i + idx}_${Date.now().toString().slice(-6)}`,
+          MessageBody: JSON.stringify({
+            associationId,
+            campaignRunId,
+            pk: member.pk?.S || campaignRunId,
+            sk: rawSk,
+            recipientPhone: cleanPhone,
+            recipientName: customName,
+            templateName,
+          }),
+        };
+      });
+
+      // -----------------------------------------------------------------
+      // 3. SEND TO OUTBOUND SQS BUFFER
+      // -----------------------------------------------------------------
+      await sqs.send(
+        new SendMessageBatchCommand({
+          QueueUrl: QUEUE_URL,
+          Entries: entries,
         })
-      }));
+      );
 
-      await sqs.send(new SendMessageBatchCommand({
-        QueueUrl: queueUrl,
-        Entries: entries
-      }));
-
-      messagesQueued += entries.length;
+      totalQueued += entries.length;
     }
 
-    // 4. Return success to the React frontend
+    console.log(`Successfully buffered ${totalQueued} messages into SQS.`);
+
     return {
       status: "SUCCESS",
-      queuedCount: messagesQueued,
-      campaignRunId: campaignRunId
+      queuedCount: totalQueued,
+      campaignRunId,
     };
-
   } catch (error: any) {
-    console.error("Failed to dispatch broadcast:", error);
+    console.error("Failed to execute broadcast dispatch:", error);
     throw new Error(`Dispatch failed: ${error.message}`);
   }
 };
