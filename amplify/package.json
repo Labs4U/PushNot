@@ -1,3 +1,7 @@
 {
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.609.0",
+    "@aws-sdk/client-sqs": "^3.609.0"
+  }
 }

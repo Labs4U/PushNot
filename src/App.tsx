@@ -1,47 +1,47 @@
-import { useEffect, useState } from "react";
-import type { Schema } from "../amplify/data/resource";
-import { generateClient } from "aws-amplify/data";
-import { Authenticator } from "@aws-amplify/ui-react";
+import { useState } from 'react';
+import './App.css';
+import MessagesView from './components/MessagesView';
+import AnalyticsView from './components/AnalyticsView';
+import BillsView from './components/BillsView';
 
-const client = generateClient<Schema>();
-
-function App() {
-  const [todos, setTodos] = useState<Array<Schema["Todo"]["type"]>>([]);
-
-  useEffect(() => {
-    client.models.Todo.observeQuery().subscribe({
-      next: (data) => setTodos([...data.items]),
-    });
-  }, []);
-
-  function createTodo() {
-    client.models.Todo.create({ content: window.prompt("Todo content") });
-  }
+export default function App() {
+  const [activeTab, setActiveTab] = useState<'messages' | 'analytics' | 'bills'>('messages');
 
   return (
-    <Authenticator>
-      {({ signOut, user }) => (
-        <main>
-          <h1>My todos</h1>
-          <p>Signed in as: {user?.signInDetails?.loginId}</p>
-          <button onClick={signOut}>Sign Out</button>
-          <button onClick={createTodo}>+ new</button>
-          <ul>
-            {todos.map((todo) => (
-              <li key={todo.id}>{todo.content}</li>
-            ))}
-          </ul>
-          <div>
-            🥳 App successfully hosted. Try creating a new todo.
-            <br />
-            <a href="https://docs.amplify.aws/react/start/quickstart/#make-frontend-updates">
-              Review next step of this tutorial.
-            </a>
-          </div>
-        </main>
-      )}
-    </Authenticator>
+    <div className="app">
+      {/* Header with Tab Navigation */}
+      <div className="app-header">
+        <div className="app-title">📢 Push Notification Dashboard</div>
+        <nav className="tab-nav">
+          <button
+            className={`tab-button ${activeTab === 'messages' ? 'active' : ''}`}
+            onClick={() => setActiveTab('messages')}
+          >
+            Messages
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'analytics' ? 'active' : ''}`}
+            onClick={() => setActiveTab('analytics')}
+          >
+            Analytics
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'bills' ? 'active' : ''}`}
+            onClick={() => setActiveTab('bills')}
+          >
+            Billing
+          </button>
+        </nav>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="app-content">
+        <div className="view-container">
+          {activeTab === 'messages' && <MessagesView />}
+          {activeTab === 'analytics' && <AnalyticsView />}
+          {activeTab === 'bills' && <BillsView />}
+        </div>
+      </div>
+    </div>
   );
 }
-
-export default App;
