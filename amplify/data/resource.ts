@@ -37,6 +37,13 @@ const schema = a.schema({
     address: a.string(),
     optIn: a.boolean(),        // Global opt-in for the member
 
+    totalCampaignsReceived: a.integer(),
+    engagementRatePercent: a.float(),     // e.g., 85.5
+    conversionRatePercent: a.float(),     // e.g., 40.0
+    lifetimeContributionAmount: a.float(),
+    averageContributionAmount: a.float(),
+    interactionPersona: a.string(),       // 'CLICKER', 'CHATTER', 'PASSIVE'
+
     // --- 6. Campaign Attributes ---
     title: a.string(),
     description: a.string(),

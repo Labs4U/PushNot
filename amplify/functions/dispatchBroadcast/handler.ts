@@ -65,6 +65,40 @@ export const handler = async (event: any) => {
     const BATCH_SIZE = 10;
     let totalQueued = 0;
 
+    // for (let i = 0; i < targetMembers.length; i += BATCH_SIZE) {
+    //   const chunk = targetMembers.slice(i, i + BATCH_SIZE);
+
+    //   const entries = chunk.map((member, idx) => {
+    //     const rawSk = member.sk?.S || "";
+    //     const cleanPhone = rawSk.replace(/^MEM#/, ""); 
+    //     const customName = member.name?.S || "";
+    //     // 🔴 REMOVED: templateName is no longer pulled from the member record here.
+
+    //     return {
+    //       Id: `msg_${i + idx}_${Date.now().toString().slice(-6)}`,
+    //       MessageBody: JSON.stringify({
+    //         associationId,
+    //         campaignRunId,
+    //         recipientPhone: cleanPhone,
+    //         recipientName: customName,
+    //         templateName,    // 🟢 Passed down globally from the Campaign record
+    //         templateLanguage,
+    //         campaignMessage,
+    //         associationName
+    //       }),
+    //     };
+    //   });
+
+    //   // 5. SEND TO OUTBOUND SQS BUFFER
+    //   await sqs.send(
+    //     new SendMessageBatchCommand({
+    //       QueueUrl: QUEUE_URL,
+    //       Entries: entries,
+    //     })
+    //   );
+    //   totalQueued += entries.length;
+    // }
+    // Inside dispatchBroadcast/handler.ts (Step 4: Chunk into SQS Batches)
     for (let i = 0; i < targetMembers.length; i += BATCH_SIZE) {
       const chunk = targetMembers.slice(i, i + BATCH_SIZE);
 
@@ -72,7 +106,10 @@ export const handler = async (event: any) => {
         const rawSk = member.sk?.S || "";
         const cleanPhone = rawSk.replace(/^MEM#/, ""); 
         const customName = member.name?.S || "";
-        // 🔴 REMOVED: templateName is no longer pulled from the member record here.
+        
+        // 🟢 Pull template configuration directly from the Campaign record
+        const templateName = campRecord.Item?.templateName?.S || "campaign_msg";
+        const templateLanguage = campRecord.Item?.templateLanguage?.S || "en";
 
         return {
           Id: `msg_${i + idx}_${Date.now().toString().slice(-6)}`,
@@ -81,15 +118,14 @@ export const handler = async (event: any) => {
             campaignRunId,
             recipientPhone: cleanPhone,
             recipientName: customName,
-            templateName,    // 🟢 Passed down globally from the Campaign record
-            templateLanguage,
-            campaignMessage,
+            templateName,        // Passed dynamically (e.g., campaign_msg_ar)
+            templateLanguage,    // Passed dynamically (e.g., ar or en)
+            campaignMessage,     // Injected into Meta variable {{2}}
             associationName
           }),
         };
       });
 
-      // 5. SEND TO OUTBOUND SQS BUFFER
       await sqs.send(
         new SendMessageBatchCommand({
           QueueUrl: QUEUE_URL,

@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import './App.css';
 import MessagesView from './components/MessagesView';
+import CampaignsView from './components/CampaignsView';
 import AnalyticsView from './components/AnalyticsView';
 import BillsView from './components/BillsView';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'messages' | 'analytics' | 'bills'>('messages');
+  const [activeTab, setActiveTab] = useState<'messages' | 'campaigns' | 'analytics' | 'bills'>('messages');
 
   return (
     <div className="app">
@@ -18,6 +19,12 @@ export default function App() {
             onClick={() => setActiveTab('messages')}
           >
             Messages
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'campaigns' ? 'active' : ''}`}
+            onClick={() => setActiveTab('campaigns')}
+          >
+            Campaigns
           </button>
           <button
             className={`tab-button ${activeTab === 'analytics' ? 'active' : ''}`}
@@ -38,6 +45,7 @@ export default function App() {
       <div className="app-content">
         <div className="view-container">
           {activeTab === 'messages' && <MessagesView />}
+          {activeTab === 'campaigns' && <CampaignsView />}
           {activeTab === 'analytics' && <AnalyticsView />}
           {activeTab === 'bills' && <BillsView />}
         </div>

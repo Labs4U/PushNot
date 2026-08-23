@@ -23,7 +23,7 @@ body {
 }
 
 /* =====================================================================
-   MAIN APP CONTAINER - NO SCROLLING, FULL SCREEN
+   MAIN APP CONTAINER - FULL VIEWPORT, ZERO WASTED SPACE
    ===================================================================== */
 .app {
   height: 100vh;
@@ -40,7 +40,6 @@ body {
 .app-header {
   background-color: #1e293b;
   border-bottom: 1px solid #334155;
-  padding: 0;
   display: flex;
   align-items: center;
   height: 56px;
@@ -53,6 +52,7 @@ body {
   font-weight: 600;
   margin-left: 24px;
   color: #f1f5f9;
+  white-space: nowrap;
 }
 
 .tab-nav {
@@ -87,26 +87,27 @@ body {
 }
 
 /* =====================================================================
-   MAIN CONTENT AREA - FULL HEIGHT, NO SCROLL
+   MAIN CONTENT AREA - FILLS REMAINING SPACE
    ===================================================================== */
 .app-content {
   flex: 1;
   display: flex;
   flex-direction: column;
   width: 100%;
+  min-height: 0;
   overflow: hidden;
 }
 
 .view-container {
   flex: 1;
   width: 100%;
-  height: 100%;
+  min-height: 0;
   display: flex;
   overflow: hidden;
 }
 
 /* =====================================================================
-   GRID LAYOUT - RESPONSIVE 2-COLUMN
+   GRID LAYOUT - RESPONSIVE 2-COLUMN (HIGH DENSITY)
    ===================================================================== */
 .grid-2-col {
   display: grid;
@@ -123,18 +124,34 @@ body {
   flex-direction: column;
   width: 100%;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
 }
 
-/* Responsive: Stack on smaller screens */
+/* Responsive: 3-column on ultra-wide screens */
+@media (min-width: 1920px) {
+  .grid-2-col {
+    grid-template-columns: 1fr 1fr 0.8fr;
+  }
+}
+
+/* Responsive: Stack on medium screens */
 @media (max-width: 1200px) {
   .grid-2-col {
     grid-template-columns: 1fr;
   }
 }
 
+/* Responsive: Tighter on tablets */
+@media (max-width: 768px) {
+  .grid-2-col {
+    gap: 12px;
+    padding: 12px;
+  }
+}
+
 /* =====================================================================
-   SINGLE COLUMN LAYOUT (for Analytics & Bills)
+   SINGLE COLUMN LAYOUT (for Campaigns, Analytics, Bills - ZERO WASTE)
    ===================================================================== */
 .view-single-col {
   display: flex;
@@ -146,8 +163,16 @@ body {
   overflow: hidden;
 }
 
+/* Responsive padding for smaller screens */
+@media (max-width: 768px) {
+  .view-single-col {
+    gap: 12px;
+    padding: 12px;
+  }
+}
+
 /* =====================================================================
-   PANEL / CARD COMPONENTS
+   PANEL / CARD COMPONENTS (RESPONSIVE)
    ===================================================================== */
 .panel {
   background-color: #1e293b;
@@ -177,6 +202,8 @@ body {
 
 .panel input[type="text"],
 .panel input[type="date"],
+.panel input[type="datetime-local"],
+.panel input[type="number"],
 .panel select,
 .panel textarea {
   background-color: #0f172a;
@@ -185,12 +212,15 @@ body {
   color: #e2e8f0;
   padding: 8px 12px;
   font-size: 14px;
-  transition: border-color 0.2s ease-in-out;
+  transition: all 0.2s ease-in-out;
   font-family: inherit;
+  width: 100%;
 }
 
 .panel input[type="text"]:focus,
 .panel input[type="date"]:focus,
+.panel input[type="datetime-local"]:focus,
+.panel input[type="number"]:focus,
 .panel select:focus,
 .panel textarea:focus {
   outline: none;
@@ -200,6 +230,8 @@ body {
 
 .panel input[type="text"]:disabled,
 .panel input[type="date"]:disabled,
+.panel input[type="datetime-local"]:disabled,
+.panel input[type="number"]:disabled,
 .panel select:disabled,
 .panel textarea:disabled {
   background-color: #0f172a;
@@ -209,7 +241,7 @@ body {
 }
 
 /* =====================================================================
-   CAMPAIGN SEARCH WRAPPER - ALLOWS DROPDOWN OVERFLOW
+   CAMPAIGN SEARCH WRAPPER
    ===================================================================== */
 .campaign-search-wrapper {
   flex-shrink: 0;
@@ -258,7 +290,7 @@ body {
 }
 
 /* =====================================================================
-   CAMPAIGN DROPDOWN SUGGESTIONS - FLOATING ABOVE ALL
+   CAMPAIGN DROPDOWN SUGGESTIONS
    ===================================================================== */
 .campaign-suggestions-dropdown {
   position: absolute;
@@ -350,8 +382,8 @@ body {
 
 .message-box textarea {
   width: 100%;
-  height: 120px;
-  resize: none;
+  min-height: 100px;
+  resize: vertical;
   padding: 12px;
   margin-bottom: 12px;
 }
@@ -371,6 +403,7 @@ body {
   cursor: pointer;
   transition: all 0.2s ease-in-out;
   white-space: nowrap;
+  width: 100%;
 }
 
 .btn-submit:hover:not(:disabled),
@@ -391,6 +424,7 @@ body {
 }
 
 .btn-use-draft {
+  width: auto;
   margin-top: 8px;
   background-color: #8b5cf6;
 }
@@ -437,8 +471,6 @@ body {
   margin: 0;
   font-size: 14px;
   font-weight: 400;
-  text-transform: none;
-  letter-spacing: normal;
   cursor: pointer;
   color: #e2e8f0;
 }
@@ -463,8 +495,6 @@ body {
   margin: 0;
   font-size: 14px;
   font-weight: 400;
-  text-transform: none;
-  letter-spacing: normal;
   cursor: pointer;
   color: #e2e8f0;
 }
@@ -500,14 +530,12 @@ body {
   margin: 0;
   font-size: 14px;
   font-weight: 500;
-  text-transform: none;
-  letter-spacing: normal;
   cursor: pointer;
   color: #e2e8f0;
 }
 
 /* =====================================================================
-   PHONE LIST
+   PHONE LIST (RESPONSIVE)
    ===================================================================== */
 .phone-list {
   flex: 1;
@@ -516,15 +544,19 @@ body {
   border-radius: 6px;
   background-color: #0f172a;
   margin-top: 8px;
+  min-height: 0;
 }
 
 .phone-list-item {
   padding: 12px 16px;
   border-bottom: 1px solid #334155;
   color: #cbd5e1;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   transition: background-color 0.2s ease-in-out;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .phone-list-item:last-child {
@@ -571,6 +603,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
 }
 
 .chat-bubble-container {
@@ -670,6 +703,7 @@ body {
   cursor: pointer;
   transition: all 0.2s ease-in-out;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .chat-input-area button:hover:not(:disabled) {
@@ -683,7 +717,7 @@ body {
 }
 
 /* =====================================================================
-   ANALYTICS / CHARTS - FLEX LAYOUT
+   ANALYTICS / CHARTS - RESPONSIVE GRID
    ===================================================================== */
 .chart-container {
   width: 100%;
@@ -706,8 +740,17 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
+/* Responsive: 3-column on ultra-wide */
+@media (min-width: 1920px) {
+  .grid-2-col-charts {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Responsive: Single column on medium screens */
 @media (max-width: 1200px) {
   .grid-2-col-charts {
     grid-template-columns: 1fr;
@@ -715,7 +758,7 @@ body {
 }
 
 /* =====================================================================
-   SCROLLBAR STYLING
+   SCROLLBAR STYLING (MODERN)
    ===================================================================== */
 ::-webkit-scrollbar {
   width: 8px;
@@ -740,4 +783,37 @@ body {
    ===================================================================== */
 .clear {
   clear: both;
+}
+
+/* Responsive Typography */
+@media (max-width: 768px) {
+  .app-title {
+    font-size: 16px;
+    margin-left: 12px;
+  }
+
+  .tab-button {
+    padding: 10px 16px;
+    font-size: 12px;
+  }
+
+  .tab-nav {
+    margin-right: 12px;
+  }
+
+  .panel {
+    padding: 12px;
+    border-radius: 6px;
+  }
+
+  .panel label {
+    font-size: 12px;
+  }
+
+  .panel input,
+  .panel select,
+  .panel textarea {
+    font-size: 13px;
+    padding: 6px 10px;
+  }
 }

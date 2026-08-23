@@ -5,14 +5,13 @@ import type { Schema } from '../../amplify/data/resource';
 const client = generateClient<Schema>();
 const CURRENT_ASSOCIATION_ID = 'ASSOC#101';
 
-export const MessagesView: React.FC = () => {
+const MessagesView: React.FC = () => {
   const [campaigns, setCampaigns] = useState<any[]>([]);
   const [campaignSearch, setCampaignSearch] = useState('');
   const [filteredCampaigns, setFilteredCampaigns] = useState<any[]>([]);
   const [selectedCampaign, setSelectedCampaign] = useState<any | null>(null);
   const [messageContent, setMessageContent] = useState('');
   const [targetAmount, setTargetAmount] = useState<number | ''>('');
-  const [isNewCampaign, setIsNewCampaign] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | null; text: string }>({
@@ -20,12 +19,11 @@ export const MessagesView: React.FC = () => {
     text: '',
   });
 
-  // 1. Fetch campaigns for this association
-  // 1. Fetch campaigns for this association using the SK prefix
+  // Fetch campaigns for this association
   const fetchCampaigns = async () => {
     try {
-      console.log("Fetching campaigns for association:", CURRENT_ASSOCIATION_ID);
-      
+      console.log('Fetching campaigns for association:', CURRENT_ASSOCIATION_ID);
+
       const { data, errors } = await client.models.PushNotSystem.list(
         {
           filter: {
@@ -36,10 +34,10 @@ export const MessagesView: React.FC = () => {
         }
       );
 
-      console.log("Campaigns fetched successfully:", data);
+      console.log('Campaigns fetched successfully:', data);
 
       if (errors && errors.length > 0) {
-        console.warn("Errors returned from campaign fetch:", errors);
+        console.warn('Errors returned from campaign fetch:', errors);
       }
 
       if (data) {
@@ -55,7 +53,7 @@ export const MessagesView: React.FC = () => {
     fetchCampaigns();
   }, []);
 
-  // 2. Filter campaigns search
+  // Filter campaigns based on search input
   useEffect(() => {
     if (!campaignSearch.trim()) {
       setFilteredCampaigns(campaigns);
@@ -74,12 +72,10 @@ export const MessagesView: React.FC = () => {
     setSelectedCampaign(camp);
     setCampaignSearch(camp.title || camp.sk);
     setMessageContent(camp.description || '');
-    setIsNewCampaign(false);
-    setIsDropdownOpen(false); // Close dropdown on selection
+    setIsDropdownOpen(false);
   };
 
-  const handleCreateNewToggle = () => {
-    setIsNewCampaign(true);
+  const handleClearSelection = () => {
     setSelectedCampaign(null);
     setCampaignSearch('');
     setMessageContent('');
@@ -88,8 +84,11 @@ export const MessagesView: React.FC = () => {
   };
 
   const handleSubmit = async () => {
+    // Determine if creating new campaign or relaunching existing
+    const isNewCampaign = !selectedCampaign && campaignSearch.trim();
+
     if (!isNewCampaign && !selectedCampaign) {
-      setFeedback({ type: 'error', text: 'Please select an existing campaign or create a new one.' });
+      setFeedback({ type: 'error', text: 'Please select an existing campaign or enter a new campaign name.' });
       return;
     }
 
@@ -99,7 +98,7 @@ export const MessagesView: React.FC = () => {
     try {
       let activeCampaignSk = selectedCampaign?.sk;
 
-      // 1. If creating a new campaign, write the record
+      // If creating a new campaign, write the record
       if (isNewCampaign) {
         const generatedCampId = `CAMP#${Date.now().toString().slice(-6)}`;
         activeCampaignSk = generatedCampId;
@@ -126,7 +125,7 @@ export const MessagesView: React.FC = () => {
         }
       }
 
-      // 2. Trigger the broadcast mutation
+      // Trigger the broadcast mutation
       const response = await client.mutations.triggerCampaignBroadcast(
         {
           associationId: CURRENT_ASSOCIATION_ID,
@@ -147,10 +146,7 @@ export const MessagesView: React.FC = () => {
       });
 
       // Reset form & reload campaign list
-      setMessageContent('');
-      setCampaignSearch('');
-      setSelectedCampaign(null);
-      setIsNewCampaign(false);
+      handleClearSelection();
       await fetchCampaigns();
     } catch (error: any) {
       console.error('Broadcast dispatch failed:', error);
@@ -164,142 +160,197 @@ export const MessagesView: React.FC = () => {
   };
 
   return (
-    <div style={{ maxWidth: 700, margin: '0 auto', padding: '24px', fontFamily: 'sans-serif' }}>
-      <h2>📣 Campaign Broadcast Dashboard</h2>
-
+    <div className="view-single-col">
+      {/* Feedback Toast */}
       {feedback.text && (
         <div
           style={{
             padding: '12px 16px',
             borderRadius: '6px',
-            marginBottom: '16px',
-            backgroundColor: feedback.type === 'success' ? '#e6f4ea' : '#fce8e6',
-            color: feedback.type === 'success' ? '#137333' : '#c5221f',
+            backgroundColor: feedback.type === 'success' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+            borderLeft: `3px solid ${feedback.type === 'success' ? '#10b981' : '#ef4444'}`,
+            color: feedback.type === 'success' ? '#86efac' : '#fca5a5',
+            fontSize: '14px',
+            fontWeight: 500,
+            flexShrink: 0,
           }}
         >
           {feedback.text}
         </div>
       )}
 
-      <div style={{ marginBottom: '16px' }}>
-        <button
-          type="button"
-          onClick={handleCreateNewToggle}
-          style={{
-            padding: '8px 14px',
-            marginRight: '8px',
-            background: isNewCampaign ? '#1a73e8' : '#f1f3f4',
-            color: isNewCampaign ? '#fff' : '#202124',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
-          + Create New Campaign
-        </button>
-      </div>
+      {/* Main Content Grid: 2-Col on desktop, 1-Col on tablet/mobile */}
+      <div className="grid-2-col" style={{ flex: 1, overflow: 'hidden', padding: '16px', gap: '16px' }}>
+        {/* LEFT PANE: Campaign Selection & Metadata */}
+        <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+          <div className="panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 600, color: '#f1f5f9' }}>
+              📋 Campaign Selection
+            </h3>
 
-      <div style={{ marginBottom: '16px', position: 'relative' }}>
-        <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '6px' }}>
-          {isNewCampaign ? 'New Campaign Title:' : 'Select / Search Existing Campaign:'}
-        </label>
-        <input
-          type="text"
-          placeholder={isNewCampaign ? 'e.g. Mosque Expansion 2026' : 'Click to select or search campaigns...'}
-          value={campaignSearch}
-          onChange={(e) => {
-            setCampaignSearch(e.target.value);
-            if (!isNewCampaign) setIsDropdownOpen(true);
-          }}
-          onFocus={() => {
-            if (!isNewCampaign) setIsDropdownOpen(true);
-          }}
-          style={{ width: '100%', padding: '10px', boxSizing: 'border-box' }}
-        />
+            {/* Campaign Search Input */}
+            <div className="campaign-search-wrapper" style={{ flexShrink: 0, marginBottom: '16px' }}>
+              <label>Campaign Identifier / Title</label>
+              <div className="campaign-search-input-container" style={{ position: 'relative', overflow: 'visible' }}>
+                <input
+                  type="text"
+                  placeholder="Search existing or type new campaign name..."
+                  value={campaignSearch}
+                  onChange={(e) => {
+                    setCampaignSearch(e.target.value);
+                    setIsDropdownOpen(true);
+                  }}
+                  onFocus={() => setIsDropdownOpen(true)}
+                  onBlur={() => setTimeout(() => setIsDropdownOpen(false), 150)}
+                  style={{ paddingRight: selectedCampaign ? '32px' : '12px' }}
+                />
 
-        {/* 🟢 Improved Dropdown Visibility Logic */}
-        {!isNewCampaign && isDropdownOpen && (
-          <ul
-            style={{
-              listStyle: 'none',
-              margin: 0,
-              padding: '8px 0',
-              border: '1px solid #ddd',
-              borderRadius: '4px',
-              maxHeight: '180px',
-              overflowY: 'auto',
-              position: 'absolute',
-              background: '#fff',
-              width: '100%',
-              zIndex: 10,
-              boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-            }}
-          >
-            {filteredCampaigns.length === 0 ? (
-              <li style={{ padding: '8px 12px', color: '#666' }}>No campaigns found in database.</li>
-            ) : (
-              filteredCampaigns.map((camp) => (
-                <li
-                  key={camp?.sk || Math.random()}
-                  onClick={() => handleSelectCampaign(camp)}
-                  style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid #f1f3f4' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = '#f8f9fa')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = '#fff')}
-                >
-                  <strong>{camp?.title || camp?.sk || 'Untitled'}</strong> ({camp?.sk || 'N/A'}) - <span style={{ color: '#1a73e8' }}>{camp?.status || 'DRAFT'}</span>
-                </li>
-              ))
+                {/* Clear Button */}
+                {selectedCampaign && (
+                  <button
+                    onClick={handleClearSelection}
+                    style={{
+                      position: 'absolute',
+                      right: '8px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      color: '#94a3b8',
+                      cursor: 'pointer',
+                      fontSize: '16px',
+                      padding: '0 4px',
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+
+                {/* Campaign Suggestions Dropdown */}
+                {isDropdownOpen && (
+                  <div className="campaign-suggestions-dropdown">
+                    {filteredCampaigns.length === 0 ? (
+                      <div className="campaign-suggestion-item" style={{ color: '#94a3b8' }}>
+                        No existing campaigns found.
+                      </div>
+                    ) : (
+                      filteredCampaigns.map((camp) => (
+                        <div
+                          key={camp?.sk || Math.random()}
+                          className="campaign-suggestion-item"
+                          onClick={() => handleSelectCampaign(camp)}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <strong>{camp?.title || camp?.sk || 'Untitled'}</strong>
+                            <span style={{ fontSize: '11px', color: '#64748b' }}>
+                              {camp?.status || 'DRAFT'}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Selected Campaign Badge */}
+            {selectedCampaign && (
+              <div className="campaign-selected-badge existing" style={{ marginBottom: '16px' }}>
+                <div>
+                  <strong>Relaunch:</strong> {selectedCampaign.title || selectedCampaign.sk}
+                </div>
+              </div>
             )}
-          </ul>
-        )}
-      </div>
 
-      {isNewCampaign && (
-        <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '6px' }}>
-            Target Contribution Goal ($):
-          </label>
-          <input
-            type="number"
-            placeholder="5000"
-            value={targetAmount}
-            onChange={(e) => setTargetAmount(e.target.value ? Number(e.target.value) : '')}
-            style={{ width: '100%', padding: '10px', boxSizing: 'border-box' }}
-          />
+            {/* Target Amount (New Campaign Only) */}
+            {!selectedCampaign && campaignSearch && (
+              <div style={{ marginBottom: '16px' }}>
+                <label>Target Contribution Goal ($)</label>
+                <input
+                  type="number"
+                  placeholder="e.g. 5000"
+                  value={targetAmount}
+                  onChange={(e) => setTargetAmount(e.target.value ? Number(e.target.value) : '')}
+                  min="0"
+                  step="100"
+                />
+              </div>
+            )}
+
+            {/* Campaign Metadata Display */}
+            {selectedCampaign && (
+              <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #334155' }}>
+                <div style={{ marginBottom: '12px' }}>
+                  <div style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 600, marginBottom: '4px' }}>
+                    Target Goal
+                  </div>
+                  <div style={{ fontSize: '18px', fontWeight: 600, color: '#3b82f6' }}>
+                    ${selectedCampaign.targetAmount || 0}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 600, marginBottom: '4px' }}>
+                    Status
+                  </div>
+                  <div
+                    style={{
+                      display: 'inline-block',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      backgroundColor: selectedCampaign.status === 'RUNNING' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(100, 116, 139, 0.1)',
+                      color: selectedCampaign.status === 'RUNNING' ? '#86efac' : '#cbd5e1',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {selectedCampaign.status || 'DRAFT'}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      )}
 
-      <div style={{ marginBottom: '20px' }}>
-        <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '6px' }}>
-          Campaign Message / Outreach Content:
-        </label>
-        <textarea
-          rows={5}
-          placeholder="Enter message details or noble cause appeal..."
-          value={messageContent}
-          onChange={(e) => setMessageContent(e.target.value)}
-          style={{ width: '100%', padding: '10px', boxSizing: 'border-box' }}
-        />
+        {/* RIGHT PANE: Message Content & Submission */}
+        <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+          <div className="panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 600, color: '#f1f5f9' }}>
+              ✍️ Message Content
+            </h3>
+
+            <label style={{ marginBottom: '8px' }}>Campaign Message / Outreach Content</label>
+            <textarea
+              placeholder="Enter message details or noble cause appeal..."
+              value={messageContent}
+              onChange={(e) => setMessageContent(e.target.value)}
+              style={{
+                flex: 1,
+                minHeight: '120px',
+                resize: 'none',
+                marginBottom: '16px',
+                padding: '12px',
+              }}
+            />
+
+            {/* Submit Button */}
+            <button
+              onClick={handleSubmit}
+              disabled={isSubmitting || (!selectedCampaign && !campaignSearch.trim())}
+              className="btn-submit"
+              style={{
+                flexShrink: 0,
+                padding: '12px 16px',
+                fontSize: '15px',
+              }}
+            >
+              {isSubmitting ? '⏳ Dispatching...' : '🚀 Submit & Broadcast to WhatsApp'}
+            </button>
+          </div>
+        </div>
       </div>
-
-      <button
-        onClick={handleSubmit}
-        disabled={isSubmitting}
-        style={{
-          width: '100%',
-          padding: '12px',
-          background: isSubmitting ? '#9aa0a6' : '#1a73e8',
-          color: '#fff',
-          fontWeight: 'bold',
-          border: 'none',
-          borderRadius: '4px',
-          cursor: isSubmitting ? 'not-allowed' : 'pointer',
-        }}
-      >
-        {isSubmitting ? 'Dispatching...' : '🚀 Submit & Broadcast to WhatsApp'}
-      </button>
     </div>
   );
 };
 
-export default MessagesView; // Note: Ensure export matches your file structure (export default MessagesView)
+export default MessagesView;
