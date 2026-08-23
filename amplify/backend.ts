@@ -1,3 +1,4 @@
+import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { defineBackend } from '@aws-amplify/backend';
 import { FunctionUrlAuthType } from 'aws-cdk-lib/aws-lambda';
 import { Queue } from 'aws-cdk-lib/aws-sqs';
@@ -55,6 +56,12 @@ processOutboundLambda.addEventSource(
 // A. Inbound Webhook Lambda Permissions
 pushNotTable.grantReadWriteData(webhookLambda);
 backend.whatsappWebhook.addEnvironment('TABLE_NAME', pushNotTable.tableName);
+webhookLambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ['dynamodb:Query'],
+    resources: [`${pushNotTable.tableArn}/index/*`],
+  })
+);
 
 // B. Dispatch Broadcast Lambda Permissions
 pushNotTable.grantReadData(dispatchLambda);

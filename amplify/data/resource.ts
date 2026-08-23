@@ -15,64 +15,60 @@ const schema = a.schema({
   // Campaign:     pk="ASSOC#<id>", sk="CAMPRUN#<id>#METADATA"
   // Member:       pk="CAMPRUN#<id>", sk="MEMBER#<phone>"
   // =====================================================================
-  PushNotSystem: a
-    .model({
-      // ===== Primary Key (Composite) =====
-      pk: a.string().required(),           // Partition Key (e.g., "ASSOC#101" or "CAMPRUN#123")
-      sk: a.string().required(),           // Sort Key (e.g., "CAMPRUN#123#METADATA" or "MEMBER#+1234567890")
+  PushNotSystem: a.model({
+    // --- 1. Base Table Keys (Tenant Isolation) ---
+    pk: a.string().required(), // e.g., ASSOC#101
+    sk: a.string().required(), // e.g., META, MEM#973..., CAMP#01, CAMP#01#973...
+    
+    // --- 2. GSI 1: Webhook Routing & Status Index ---
+    gsi1pk: a.string(),        // e.g., MSG#wamid.12345 (for webhooks) OR ASSOC#101
+    gsi1sk: a.string(),        // e.g., STATUS#RUNNING (for filtering campaigns)
+    
+    // --- 3. GSI 2: Member History Index ---
+    gsi2pk: a.string(),        // e.g., ASSOC#101#MEM#97333787388
+    gsi2sk: a.string(),        // e.g., CAMP#01
+    
+    // --- 4. Entity Type Classifier ---
+    entityType: a.string().required(), // 'ASSOCIATION' | 'MEMBER' | 'CAMPAIGN' | 'CAMPAIGN_RUN'
 
-      // ===== Entity Type Discriminator =====
-      entityType: a.string().required(),   // "CAMPAIGN", "MEMBER", etc.
+    // --- 5. Shared / Profile Attributes ---
+    name: a.string(),          // Member or Association name
+    phone: a.string(),         // Member phone number
+    address: a.string(),
+    optIn: a.boolean(),        // Global opt-in for the member
 
-      // ===== Global Secondary Index Keys =====
-      gsi1pk: a.string(),                  // GSI1 Partition (e.g., WhatsApp Message ID)
-      gsi1sk: a.string(),                  // GSI1 Sort (optional, for compound queries)
-      gsi2pk: a.string(),                  // GSI2 Partition (flexible, e.g., "ASSOC#101" for listing all campaigns)
-      gsi2sk: a.string(),                  // GSI2 Sort (optional, e.g., createdAt for sorted results)
+    // --- 6. Campaign Attributes ---
+    title: a.string(),
+    description: a.string(),
+    templateName: a.string(),
+    status: a.string(),        // 'DRAFT', 'RUNNING', 'COMPLETED'
+    type: a.string(),          // 'ANNOUNCEMENT', 'FUNDRAISER'
+    targetAmount: a.float(),   // Overall campaign goal
 
-      // ===== Campaign Master Attributes =====
-      title: a.string(),
-      type: a.string(),                    // e.g., "ANNOUNCEMENT", "PROMOTION"
-      templateName: a.string(),            // e.g., "standard_alert", "payment_reminder"
-      status: a.string(),                  // e.g., "DRAFT", "QUEUED", "SENT", "COMPLETED"
-
-      // ===== Member/Delivery State Attributes =====
-      deliveryStatus: a.string(),          // e.g., "SENT", "DELIVERED", "READ", "FAILED"
-      statusWeight: a.integer(),           // Numeric weight for analytics aggregation
-
-      // ===== WhatsApp Webhook Integration =====
-      whatsappMessageId: a.string(),       // Unique WAMID from Meta (for GSI1 queries)
-      inboundReplyText: a.string(),        // User's inbound message reply
-
-      // ===== Payment State =====
-      paymentStatusSort: a.string(),       // Composite: "STATUS#PAID#<timestamp>" or "STATUS#PENDING#<timestamp>"
-      paymentAmount: a.float(),
-
-      // ===== Timestamps =====
-      createdAt: a.datetime(),
-      updatedAt: a.datetime(),
-    })
-    // Define composite primary key
-    .identifier(['pk', 'sk'])
-
-    // Define Global Secondary Indexes (GSIs) for zero-scan queries
-    .secondaryIndexes((index) => [
-      // GSI 1: Webhook Resolver – Query by WhatsApp Message ID (e.g., incoming webhook from Meta)
-      index('gsi1pk').sortKeys(['gsi1sk']).queryField('getByWhatsAppMessageId'),
-
-      // GSI 2: Flexible Secondary Queries – Query by gsi2pk (e.g., all campaigns for an association)
-      index('gsi2pk').sortKeys(['gsi2sk']).queryField('listByGsi2pk'),
-
-      // GSI 3: Alternative PK Queries – Query by primary pk with sort key filtering
-      index('pk').sortKeys(['sk']).queryField('listByPk'),
-    ])
-
-    // Authorization: Standard authenticated users and public API key access
-    // No groupsDefinedIn() to avoid implicit field conflicts
-    .authorization((allow) => [
-      allow.authenticated().to(['create', 'read', 'update', 'delete']),
-      allow.publicApiKey().to(['create', 'read', 'update', 'delete']),
-    ]),
+    // --- 7. Campaign Run (Target/Ledger) Attributes ---
+    deliveryStatus: a.string(),// 'QUEUED', 'SENT', 'DELIVERED', 'READ'
+    whatsappMessageId: a.string(), 
+    paymentStatus: a.string(), // 'PENDING', 'LINK_SENT', 'PAID'
+    paymentAmount: a.float(),  // Amount actually paid by this member
+    inboundReplyText: a.string(), // If they reply with text instead of a button
+    paymentLinkSentAt: a.datetime(), // Idempotency check to prevent duplicate links
+    isRead: a.boolean(),
+    hasPaid: a.boolean(),
+    hasReplied: a.boolean(),
+    
+  })
+  .identifier(['pk', 'sk'])
+  .secondaryIndexes((index) => [
+    // Index 1: Find Active Campaigns OR Find Message by WAMID
+    index('gsi1pk').sortKeys(['gsi1sk']).name('ByStatusOrWamid'),
+    
+    // Index 2: Find all Campaign participation for a single Member
+    index('gsi2pk').sortKeys(['gsi2sk']).name('ByMemberHistory')
+  ])
+  .authorization((allow) => [
+    allow.publicApiKey().to(['create', 'read', 'update', 'delete']),
+    allow.authenticated()
+  ]),
 
   // =====================================================================
   // ORCHESTRATION MUTATIONS

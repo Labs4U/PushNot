@@ -1,91 +1,124 @@
-export default function BillsView() {
-  const mockBillingData = [
-    { id: 1, date: '2024-08-15', campaign: 'Campaign A', messages: 60000, rate: 0.005, total: 300.00, status: 'Paid' },
-    { id: 2, date: '2024-08-08', campaign: 'Campaign B', messages: 45000, rate: 0.005, total: 225.00, status: 'Paid' },
-    { id: 3, date: '2024-08-01', campaign: 'Campaign C', messages: 32500, rate: 0.005, total: 162.50, status: 'Paid' },
-    { id: 4, date: '2024-07-25', campaign: 'Campaign D', messages: 50000, rate: 0.005, total: 250.00, status: 'Paid' },
-    { id: 5, date: '2024-07-18', campaign: 'Campaign E', messages: 28000, rate: 0.005, total: 140.00, status: 'Pending' },
-  ];
+import React, { useState, useEffect } from 'react';
+import { generateClient } from 'aws-amplify/data';
+import type { Schema } from '../../amplify/data/resource';
 
-  const totalSpent = mockBillingData
-    .filter(item => item.status === 'Paid')
-    .reduce((sum, item) => sum + item.total, 0);
+const client = generateClient<Schema>();
+const CURRENT_ASSOCIATION_ID = 'ASSOC#101';
+
+export const BillsView: React.FC = () => {
+  const [records, setRecords] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filterStatus, setFilterStatus] = useState<string>('ALL');
+
+  const fetchRecords = async () => {
+    setLoading(true);
+    try {
+      const { data, errors } = await client.models.PushNotSystem.list(
+        {
+          filter: {
+            pk: { eq: CURRENT_ASSOCIATION_ID },
+            entityType: { eq: 'CAMPAIGN_RUN' },
+          },
+          authMode: 'apiKey'
+        },
+
+      );
+
+      if (!errors && data) {
+        setRecords(data);
+      }
+    } catch (err) {
+      console.error('Error fetching contribution records:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRecords();
+  }, []);
+
+  const filtered = filterStatus === 'ALL'
+    ? records
+    : records.filter((r) => r.paymentStatus === filterStatus || r.deliveryStatus === filterStatus);
 
   return (
-    <div className="view-single-col">
-      {/* Billing Summary Panel */}
-      <div className="panel" style={{ flex: '0 0 auto' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
-          <BillingMetric label="Total Spent" value={`$${totalSpent.toFixed(2)}`} color="#10b981" />
-          <BillingMetric label="Messages Sent" value="215,500" color="#3b82f6" />
-          <BillingMetric label="Avg. Cost/1k" value="$5.00" color="#8b5cf6" />
-        </div>
+    <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px', fontFamily: 'sans-serif' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2>💳 Member Contributions & Delivery Ledger</h2>
+        <button onClick={fetchRecords} style={{ padding: '8px 14px', cursor: 'pointer' }}>
+          🔄 Refresh
+        </button>
       </div>
 
-      {/* Billing History Table */}
-      <div className="panel" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        <h4 style={{ margin: '0 0 12px 0', color: '#f1f5f9', fontSize: '14px', fontWeight: '600', flexShrink: 0 }}>Transaction History</h4>
-        <div style={{ flex: 1, overflow: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-            <thead style={{ position: 'sticky', top: 0, backgroundColor: '#0f172a', borderBottom: '1px solid #334155' }}>
-              <tr>
-                <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', fontWeight: '600' }}>Date</th>
-                <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', fontWeight: '600' }}>Campaign</th>
-                <th style={{ padding: '12px', textAlign: 'right', color: '#94a3b8', fontWeight: '600' }}>Messages</th>
-                <th style={{ padding: '12px', textAlign: 'right', color: '#94a3b8', fontWeight: '600' }}>Cost</th>
-                <th style={{ padding: '12px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mockBillingData.map((item, idx) => (
-                <tr 
-                  key={item.id} 
-                  style={{ 
-                    borderBottom: '1px solid #334155',
-                    backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(59, 130, 246, 0.05)'
-                  }}
-                >
-                  <td style={{ padding: '12px', color: '#cbd5e1' }}>{item.date}</td>
-                  <td style={{ padding: '12px', color: '#cbd5e1' }}>{item.campaign}</td>
-                  <td style={{ padding: '12px', textAlign: 'right', color: '#cbd5e1' }}>{item.messages.toLocaleString()}</td>
-                  <td style={{ padding: '12px', textAlign: 'right', color: '#10b981', fontWeight: '600' }}>${item.total.toFixed(2)}</td>
-                  <td style={{ padding: '12px', textAlign: 'center' }}>
-                    <span style={{
+      <div style={{ margin: '16px 0' }}>
+        <label style={{ marginRight: '8px', fontWeight: 'bold' }}>Filter By Status:</label>
+        <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+          <option value="ALL">All Records</option>
+          <option value="SENT">Sent</option>
+          <option value="READ">Read</option>
+          <option value="REPLIED">Replied</option>
+          <option value="LINK_SENT">Payment Link Sent</option>
+          <option value="PAID">Paid</option>
+        </select>
+      </div>
+
+      {loading ? (
+        <p>Loading ledger records...</p>
+      ) : filtered.length === 0 ? (
+        <p>No records found for current criteria.</p>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+          <thead>
+            <tr style={{ background: '#f1f3f4', borderBottom: '2px solid #ddd' }}>
+              <th style={{ padding: '10px' }}>Campaign Run / Phone</th>
+              <th style={{ padding: '10px' }}>Delivery</th>
+              <th style={{ padding: '10px' }}>Payment Status</th>
+              <th style={{ padding: '10px' }}>Amount</th>
+              <th style={{ padding: '10px' }}>Last Reply</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((item) => (
+              <tr key={item.sk} style={{ borderBottom: '1px solid #eee' }}>
+                <td style={{ padding: '10px' }}>
+                  <strong>{item.sk}</strong>
+                </td>
+                <td style={{ padding: '10px' }}>
+                  <span
+                    style={{
                       padding: '4px 8px',
                       borderRadius: '4px',
                       fontSize: '12px',
-                      fontWeight: '600',
-                      backgroundColor: item.status === 'Paid' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(251, 146, 60, 0.1)',
-                      color: item.status === 'Paid' ? '#10b981' : '#f97316'
-                    }}>
-                      {item.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                      background: item.deliveryStatus === 'READ' ? '#cbf0f8' : item.deliveryStatus === 'REPLIED' ? '#ceead6' : '#e8eaed',
+                    }}
+                  >
+                    {item.deliveryStatus || 'QUEUED'}
+                  </span>
+                </td>
+                <td style={{ padding: '10px' }}>
+                  <span
+                    style={{
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                      background: item.paymentStatus === 'PAID' ? '#ceead6' : item.paymentStatus === 'LINK_SENT' ? '#feefe3' : '#f1f3f4',
+                      color: item.paymentStatus === 'PAID' ? '#137333' : item.paymentStatus === 'LINK_SENT' ? '#b06000' : '#5f6368',
+                    }}
+                  >
+                    {item.paymentStatus || 'PENDING'}
+                  </span>
+                </td>
+                <td style={{ padding: '10px' }}>${item.paymentAmount || 0}</td>
+                <td style={{ padding: '10px', color: '#5f6368' }}>{item.inboundReplyText || '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
-}
+};
 
-function BillingMetric({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <div style={{
-      backgroundColor: '#0f172a',
-      border: `1px solid ${color}40`,
-      borderRadius: '6px',
-      padding: '16px',
-      textAlign: 'center'
-    }}>
-      <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-        {label}
-      </div>
-      <div style={{ fontSize: '24px', fontWeight: '700', color: color }}>
-        {value}
-      </div>
-    </div>
-  );
-}
+export default BillsView;

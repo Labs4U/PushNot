@@ -1,94 +1,95 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '../../amplify/data/resource';
-import ChatAssistant from './ChatAssistant';
 
 const client = generateClient<Schema>();
+const CURRENT_ASSOCIATION_ID = 'ASSOC#101';
 
-interface CampaignSuggestion {
-  id: string;
-  label: string;
-  isNew: boolean;
-}
-
-export default function MessagesView() {
+export const MessagesView: React.FC = () => {
+  const [campaigns, setCampaigns] = useState<any[]>([]);
   const [campaignSearch, setCampaignSearch] = useState('');
-  const [campaignSuggestions, setCampaignSuggestions] = useState<CampaignSuggestion[]>([]);
-  const [selectedCampaign, setSelectedCampaign] = useState<CampaignSuggestion | null>(null);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const suggestionsRef = useRef<HTMLDivElement>(null);
-
-  const [message, setMessage] = useState('');
-  const [scheduleType, setScheduleType] = useState<'single' | 'redundant'>('single');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showChat, setShowChat] = useState(false);
+  const [filteredCampaigns, setFilteredCampaigns] = useState<any[]>([]);
+  const [selectedCampaign, setSelectedCampaign] = useState<any | null>(null);
+  const [messageContent, setMessageContent] = useState('');
+  const [targetAmount, setTargetAmount] = useState<number | ''>('');
+  const [isNewCampaign, setIsNewCampaign] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | null; text: string }>({ type: null, text: '' });
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | null; text: string }>({
+    type: null,
+    text: '',
+  });
 
-  // Mock historical campaigns
-  const mockHistoricalCampaigns: CampaignSuggestion[] = [
-    { id: 'CAMPRUN#A#1692374400', label: '📅 Campaign A (Back to School)', isNew: false },
-    { id: 'CAMPRUN#B#1692374500', label: '🕌 Campaign B (Hajj Trip)', isNew: false },
-    { id: 'CAMPRUN#C#1692374600', label: '🎉 Campaign C (Year End Sale)', isNew: false },
-    { id: 'CAMPRUN#D#1692374700', label: '🎓 Campaign D (Spring Semester)', isNew: false },
-    { id: 'CAMPRUN#E#1692374800', label: '🏖️ Campaign E (Summer Deals)', isNew: false },
-  ];
+  // 1. Fetch campaigns for this association
+  // 1. Fetch campaigns for this association using the SK prefix
+  const fetchCampaigns = async () => {
+    try {
+      console.log("Fetching campaigns for association:", CURRENT_ASSOCIATION_ID);
+      
+      const { data, errors } = await client.models.PushNotSystem.list(
+        {
+          filter: {
+            pk: { eq: CURRENT_ASSOCIATION_ID },
+            sk: { beginsWith: 'CAMP#' },
+          },
+          authMode: 'apiKey',
+        }
+      );
 
-  // Handle campaign search and suggestions
-  useEffect(() => {
-    if (!campaignSearch.trim()) {
-      setCampaignSuggestions([]);
-      setShowSuggestions(false);
-      return;
+      console.log("Campaigns fetched successfully:", data);
+
+      if (errors && errors.length > 0) {
+        console.warn("Errors returned from campaign fetch:", errors);
+      }
+
+      if (data) {
+        setCampaigns(data);
+        setFilteredCampaigns(data);
+      }
+    } catch (err) {
+      console.error('Error fetching campaigns:', err);
     }
+  };
 
-    const searchTerm = campaignSearch.toLowerCase();
-    
-    // Filter historical campaigns
-    const filtered = mockHistoricalCampaigns.filter(campaign =>
-      campaign.label.toLowerCase().includes(searchTerm) ||
-      campaign.id.toLowerCase().includes(searchTerm)
-    );
-
-    // Always include option to create new campaign
-    const suggestions: CampaignSuggestion[] = [
-      ...filtered,
-      {
-        id: `CAMPRUN#${Date.now()}`,
-        label: `✨ New Campaign: "${campaignSearch}"`,
-        isNew: true
-      }
-    ];
-
-    setCampaignSuggestions(suggestions);
-    setShowSuggestions(true);
-  }, [campaignSearch]);
-
-  // Close suggestions when clicking outside
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (suggestionsRef.current && !suggestionsRef.current.contains(e.target as Node)) {
-        setShowSuggestions(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    fetchCampaigns();
   }, []);
 
-  const handleSelectCampaign = (suggestion: CampaignSuggestion) => {
-    setSelectedCampaign(suggestion);
-    setCampaignSearch(suggestion.label);
-    setShowSuggestions(false);
+  // 2. Filter campaigns search
+  useEffect(() => {
+    if (!campaignSearch.trim()) {
+      setFilteredCampaigns(campaigns);
+    } else {
+      const q = campaignSearch.toLowerCase();
+      const filtered = campaigns.filter((c) => {
+        const title = c?.title?.toLowerCase() || '';
+        const sk = c?.sk?.toLowerCase() || '';
+        return title.includes(q) || sk.includes(q);
+      });
+      setFilteredCampaigns(filtered);
+    }
+  }, [campaignSearch, campaigns]);
+
+  const handleSelectCampaign = (camp: any) => {
+    setSelectedCampaign(camp);
+    setCampaignSearch(camp.title || camp.sk);
+    setMessageContent(camp.description || '');
+    setIsNewCampaign(false);
+    setIsDropdownOpen(false); // Close dropdown on selection
+  };
+
+  const handleCreateNewToggle = () => {
+    setIsNewCampaign(true);
+    setSelectedCampaign(null);
+    setCampaignSearch('');
+    setMessageContent('');
+    setTargetAmount('');
+    setIsDropdownOpen(false);
   };
 
   const handleSubmit = async () => {
-    if (!selectedCampaign) {
-      setFeedback({ type: 'error', text: 'Please select or create a campaign first.' });
-      return;
-    }
-    if (!message.trim()) {
-      setFeedback({ type: 'error', text: 'Message content cannot be empty.' });
+    if (!isNewCampaign && !selectedCampaign) {
+      setFeedback({ type: 'error', text: 'Please select an existing campaign or create a new one.' });
       return;
     }
 
@@ -96,52 +97,66 @@ export default function MessagesView() {
     setFeedback({ type: null, text: '' });
 
     try {
-      const activeCampaignId = selectedCampaign.id;
-      const currentAssociationId = 'ASSOC#101';
+      let activeCampaignSk = selectedCampaign?.sk;
 
-      // If it's a new campaign, create the record
-      if (selectedCampaign.isNew) {
-        const { errors: createErrors } = await client.models.PushNotSystem.create({
-          pk: currentAssociationId,
-          sk: `${activeCampaignId}#METADATA`,
-          entityType: 'CAMPAIGN',
-          gsi2pk: currentAssociationId,
-          gsi2sk: new Date().toISOString(),
-          title: selectedCampaign.label.replace(/^✨ New Campaign: "/, '').replace(/"$/, ''),
-          type: 'ANNOUNCEMENT',
-          templateName: 'standard_alert',
-          status: 'DRAFT',
-          createdAt: new Date().toISOString(),
-        });
+      // 1. If creating a new campaign, write the record
+      if (isNewCampaign) {
+        const generatedCampId = `CAMP#${Date.now().toString().slice(-6)}`;
+        activeCampaignSk = generatedCampId;
+
+        const { errors: createErrors } = await client.models.PushNotSystem.create(
+          {
+            pk: CURRENT_ASSOCIATION_ID,
+            sk: generatedCampId,
+            entityType: 'CAMPAIGN',
+            gsi1pk: CURRENT_ASSOCIATION_ID,
+            gsi1sk: 'STATUS#RUNNING',
+            title: campaignSearch.trim() || 'Untitled Campaign',
+            description: messageContent.trim(),
+            type: 'FUNDRAISER',
+            templateName: 'campaign_msg',
+            status: 'RUNNING',
+            targetAmount: targetAmount ? Number(targetAmount) : 0,
+          },
+          { authMode: 'apiKey' }
+        );
 
         if (createErrors && createErrors.length > 0) {
-          console.warn('Campaign creation warning:', createErrors);
+          throw new Error(createErrors[0].message);
         }
       }
 
-      // Trigger the broadcast mutation
-      const { errors } = await client.mutations.triggerCampaignBroadcast({
-        associationId: currentAssociationId,
-        campaignRunId: activeCampaignId,
-      });
+      // 2. Trigger the broadcast mutation
+      const response = await client.mutations.triggerCampaignBroadcast(
+        {
+          associationId: CURRENT_ASSOCIATION_ID,
+          campaignRunId: activeCampaignSk,
+        },
+        { authMode: 'apiKey' }
+      );
 
-      if (errors && errors.length > 0) {
-        throw new Error(errors[0].message);
+      if (response.errors && response.errors.length > 0) {
+        throw new Error(response.errors[0].message);
       }
 
-      setFeedback({ 
-        type: 'success', 
-        text: `Success! Campaign has been queued for dispatch.` 
+      const responseData = response.data ? JSON.parse(response.data as string) : {};
+
+      setFeedback({
+        type: 'success',
+        text: `Success! Dispatched campaign ${activeCampaignSk}. Queued ${responseData.queuedCount || 0} messages.`,
       });
-      setMessage('');
+
+      // Reset form & reload campaign list
+      setMessageContent('');
       setCampaignSearch('');
       setSelectedCampaign(null);
-
+      setIsNewCampaign(false);
+      await fetchCampaigns();
     } catch (error: any) {
       console.error('Broadcast dispatch failed:', error);
-      setFeedback({ 
-        type: 'error', 
-        text: error.message || 'An unexpected error occurred while dispatching.' 
+      setFeedback({
+        type: 'error',
+        text: error.message || 'An unexpected error occurred during dispatch.',
       });
     } finally {
       setIsSubmitting(false);
@@ -149,162 +164,142 @@ export default function MessagesView() {
   };
 
   return (
-    <div className="grid-2-col">
-      {/* Left Column - Scrollable Container */}
-      <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', gap: '16px' }}>
-        {/* Campaign Search Panel - ALLOWS DROPDOWN OVERFLOW */}
-        <div className="campaign-search-wrapper" ref={suggestionsRef}>
-          <label>Campaign</label>
-          <div className="campaign-search-input-container">
-            <input 
-              type="text" 
-              placeholder="Search or create a campaign..." 
-              value={campaignSearch}
-              onChange={(e) => setCampaignSearch(e.target.value)}
-              onFocus={() => campaignSuggestions.length > 0 && setShowSuggestions(true)}
-              disabled={isSubmitting}
-            />
-            
-            {/* Dropdown Suggestions - Floats Above All */}
-            {showSuggestions && campaignSuggestions.length > 0 && (
-              <div className="campaign-suggestions-dropdown">
-                {campaignSuggestions.map((suggestion) => (
-                  <div
-                    key={suggestion.id}
-                    className={`campaign-suggestion-item ${suggestion.isNew ? 'new' : ''}`}
-                    onClick={() => handleSelectCampaign(suggestion)}
-                  >
-                    {suggestion.label}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+    <div style={{ maxWidth: 700, margin: '0 auto', padding: '24px', fontFamily: 'sans-serif' }}>
+      <h2>📣 Campaign Broadcast Dashboard</h2>
 
-          {/* Selected Campaign Badge */}
-          {selectedCampaign && (
-            <div className={`campaign-selected-badge ${selectedCampaign.isNew ? 'new' : 'existing'}`}>
-              <span>{selectedCampaign.label}</span>
-              <button
-                onClick={() => {
-                  setSelectedCampaign(null);
-                  setCampaignSearch('');
-                }}
-              >
-                ✕
-              </button>
-            </div>
-          )}
+      {feedback.text && (
+        <div
+          style={{
+            padding: '12px 16px',
+            borderRadius: '6px',
+            marginBottom: '16px',
+            backgroundColor: feedback.type === 'success' ? '#e6f4ea' : '#fce8e6',
+            color: feedback.type === 'success' ? '#137333' : '#c5221f',
+          }}
+        >
+          {feedback.text}
         </div>
+      )}
 
-        {/* Message Composition Panel */}
-        <div className="panel message-box">
-          <label>Message Content</label>
-          <textarea 
-            rows={5} 
-            value={message} 
-            onChange={(e) => setMessage(e.target.value)}
-            placeholder="Draft your campaign message here..."
-            disabled={isSubmitting}
-          />
-          
-          {feedback.type && (
-            <div style={{ 
-              marginTop: '12px', 
-              padding: '10px 12px', 
-              borderRadius: '6px', 
-              fontSize: '13px',
-              backgroundColor: feedback.type === 'error' ? '#7f1d1d' : '#064e3b',
-              color: feedback.type === 'error' ? '#fca5a5' : '#86efac',
-              border: `1px solid ${feedback.type === 'error' ? '#991b1b' : '#047857'}`
-            }}>
-              {feedback.text}
-            </div>
-          )}
+      <div style={{ marginBottom: '16px' }}>
+        <button
+          type="button"
+          onClick={handleCreateNewToggle}
+          style={{
+            padding: '8px 14px',
+            marginRight: '8px',
+            background: isNewCampaign ? '#1a73e8' : '#f1f3f4',
+            color: isNewCampaign ? '#fff' : '#202124',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+          }}
+        >
+          + Create New Campaign
+        </button>
+      </div>
 
-          <button 
-            className="btn-submit" 
-            onClick={handleSubmit}
-            disabled={isSubmitting || !selectedCampaign}
+      <div style={{ marginBottom: '16px', position: 'relative' }}>
+        <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '6px' }}>
+          {isNewCampaign ? 'New Campaign Title:' : 'Select / Search Existing Campaign:'}
+        </label>
+        <input
+          type="text"
+          placeholder={isNewCampaign ? 'e.g. Mosque Expansion 2026' : 'Click to select or search campaigns...'}
+          value={campaignSearch}
+          onChange={(e) => {
+            setCampaignSearch(e.target.value);
+            if (!isNewCampaign) setIsDropdownOpen(true);
+          }}
+          onFocus={() => {
+            if (!isNewCampaign) setIsDropdownOpen(true);
+          }}
+          style={{ width: '100%', padding: '10px', boxSizing: 'border-box' }}
+        />
+
+        {/* 🟢 Improved Dropdown Visibility Logic */}
+        {!isNewCampaign && isDropdownOpen && (
+          <ul
+            style={{
+              listStyle: 'none',
+              margin: 0,
+              padding: '8px 0',
+              border: '1px solid #ddd',
+              borderRadius: '4px',
+              maxHeight: '180px',
+              overflowY: 'auto',
+              position: 'absolute',
+              background: '#fff',
+              width: '100%',
+              zIndex: 10,
+              boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+            }}
           >
-            {isSubmitting ? 'Queueing...' : 'Submit Campaign'}
-          </button>
-        </div>
-
-        {/* Schedule & Targets Panel */}
-        <div className="panel" style={{ flex: '0 0 auto', maxHeight: '300px', overflow: 'y auto' }}>
-          <div className="controls-row">
-            <label style={{ margin: 0, width: '80px' }}>Schedule:</label>
-            <input type="date" disabled={isSubmitting} />
-            <select 
-              value={scheduleType} 
-              onChange={(e) => setScheduleType(e.target.value as any)}
-              disabled={isSubmitting}
-            >
-              <option value="single">Single</option>
-              <option value="redundant">Redundant</option>
-            </select>
-          </div>
-          
-          <div className="targets-section">
-            <div>
-              <label>Target Audience</label>
-              <div className="checkbox-list">
-                <label><input type="checkbox" disabled={isSubmitting} /> Target Group 1</label>
-                <label><input type="checkbox" disabled={isSubmitting} /> Target Group 2</label>
-                <label><input type="checkbox" disabled={isSubmitting} /> Target Group 3</label>
-              </div>
-            </div>
-            <div className="chat-assistant-toggle">
-              <input 
-                type="checkbox" 
-                id="chatAssist" 
-                checked={showChat}
-                onChange={(e) => setShowChat(e.target.checked)}
-                disabled={isSubmitting} 
-              />
-              <label htmlFor="chatAssist">💬 AI Draft Assistant</label>
-            </div>
-          </div>
-        </div>
-
-        {/* Chat Assistant Panel (Flexible) */}
-        {showChat && (
-          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-            <ChatAssistant onDraftAccepted={(draft) => setMessage(draft)} />
-          </div>
+            {filteredCampaigns.length === 0 ? (
+              <li style={{ padding: '8px 12px', color: '#666' }}>No campaigns found in database.</li>
+            ) : (
+              filteredCampaigns.map((camp) => (
+                <li
+                  key={camp?.sk || Math.random()}
+                  onClick={() => handleSelectCampaign(camp)}
+                  style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid #f1f3f4' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = '#f8f9fa')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = '#fff')}
+                >
+                  <strong>{camp?.title || camp?.sk || 'Untitled'}</strong> ({camp?.sk || 'N/A'}) - <span style={{ color: '#1a73e8' }}>{camp?.status || 'DRAFT'}</span>
+                </li>
+              ))
+            )}
+          </ul>
         )}
+      </div>
 
-        {/* Recipient List Panel */}
-        <div className="panel" style={{ flex: showChat ? '0 0 200px' : 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <label>Recipients</label>
-          <input 
-            type="text" 
-            placeholder="Search phone numbers..." 
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            disabled={isSubmitting}
-            style={{ marginBottom: '8px', flexShrink: 0 }}
+      {isNewCampaign && (
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '6px' }}>
+            Target Contribution Goal ($):
+          </label>
+          <input
+            type="number"
+            placeholder="5000"
+            value={targetAmount}
+            onChange={(e) => setTargetAmount(e.target.value ? Number(e.target.value) : '')}
+            style={{ width: '100%', padding: '10px', boxSizing: 'border-box' }}
           />
-          <div className="phone-list">
-            <div className="phone-list-item">+1-91XXXXXXX (Active)</div>
-            <div className="phone-list-item">+33-XXXXXXX (Active)</div>
-            <div className="phone-list-item">+35-XXXXXXX (Active)</div>
-            <div className="phone-list-item">+973-XXXXXX (Inactive)</div>
-            <div className="phone-list-item">+212-XXXXXXX (Active)</div>
-          </div>
         </div>
+      )}
+
+      <div style={{ marginBottom: '20px' }}>
+        <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '6px' }}>
+          Campaign Message / Outreach Content:
+        </label>
+        <textarea
+          rows={5}
+          placeholder="Enter message details or noble cause appeal..."
+          value={messageContent}
+          onChange={(e) => setMessageContent(e.target.value)}
+          style={{ width: '100%', padding: '10px', boxSizing: 'border-box' }}
+        />
       </div>
 
-      {/* Right Column - Empty (reserved for future use or quick stats) */}
-      <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div className="panel" style={{ flex: 1, justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
-          <div style={{ color: '#64748b', fontSize: '14px' }}>
-            <div style={{ fontSize: '32px', marginBottom: '8px' }}>📊</div>
-            <div>Campaign quick stats and details will appear here</div>
-          </div>
-        </div>
-      </div>
+      <button
+        onClick={handleSubmit}
+        disabled={isSubmitting}
+        style={{
+          width: '100%',
+          padding: '12px',
+          background: isSubmitting ? '#9aa0a6' : '#1a73e8',
+          color: '#fff',
+          fontWeight: 'bold',
+          border: 'none',
+          borderRadius: '4px',
+          cursor: isSubmitting ? 'not-allowed' : 'pointer',
+        }}
+      >
+        {isSubmitting ? 'Dispatching...' : '🚀 Submit & Broadcast to WhatsApp'}
+      </button>
     </div>
   );
-}
+};
+
+export default MessagesView; // Note: Ensure export matches your file structure (export default MessagesView)

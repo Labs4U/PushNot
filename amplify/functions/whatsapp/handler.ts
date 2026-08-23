@@ -1,200 +1,299 @@
+// import { DynamoDBClient, QueryCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
+
+// const ddb = new DynamoDBClient({});
+// const TABLE_NAME = process.env.TABLE_NAME!;
+// const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
+
+// export const handler = async (event: any) => {
+//   const httpMethod = event.requestContext?.http?.method || event.httpMethod;
+
+//   // 1. WEBHOOK VERIFICATION (GET)
+//   if (httpMethod === "GET") {
+//     const queryParams = event.queryStringParameters || {};
+//     if (queryParams["hub.mode"] === "subscribe" && queryParams["hub.verify_token"] === META_VERIFY_TOKEN) {
+//       return { statusCode: 200, headers: { "Content-Type": "text/plain" }, body: queryParams["hub.challenge"] };
+//     }
+//     return { statusCode: 403, body: "Forbidden" };
+//   }
+
+//   // 2. INBOUND PROCESSING (POST)
+//   if (httpMethod === "POST") {
+//     try {
+//       const body = JSON.parse(event.body || "{}");
+//       if (body.object === "whatsapp_business_account" && Array.isArray(body.entry)) {
+//         for (const entry of body.entry) {
+//           for (const change of entry.changes || []) {
+//             const value = change.value;
+            
+//             if (value?.messages?.length > 0) {
+//               for (const message of value.messages) await handleInboundMessage(message);
+//             }
+//             if (value?.statuses?.length > 0) {
+//               for (const status of value.statuses) await handleDeliveryStatus(status);
+//             }
+//           }
+//         }
+//       }
+//       return { statusCode: 200, body: JSON.stringify({ success: true }) };
+//     } catch (error: any) {
+//       console.error("Webhook processing error:", error);
+//       return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
+//     }
+//   }
+//   return { statusCode: 400, body: "Invalid method" };
+// };
+
+// // =====================================================================
+// // HELPER: Resolve Record & Update Inbound Reply (Text & Buttons)
+// // =====================================================================
+// async function handleInboundMessage(message: any) {
+//   const targetWamid = message.context?.id; 
+//   if (!targetWamid) return; 
+
+//   let inboundText = "";
+//   let isInteractiveButton = false;
+//   let buttonPayload = "";
+
+//   if (message.type === "interactive" && message.interactive?.type === "button_reply") {
+//     isInteractiveButton = true;
+//     buttonPayload = message.interactive.button_reply.id; 
+//     inboundText = message.interactive.button_reply.title;
+//   } else {
+//     inboundText = message.text?.body || "NON_TEXT_REPLY";
+//   }
+
+//   const queryRes = await ddb.send(new QueryCommand({
+//     TableName: TABLE_NAME,
+//     IndexName: "ByStatusOrWamid",
+//     KeyConditionExpression: "gsi1pk = :wamid",
+//     ExpressionAttributeValues: { ":wamid": { S: `MSG#${targetWamid}` } },
+//   }));
+
+//   if (!queryRes.Items || queryRes.Items.length === 0) return;
+
+//   const { pk, sk } = queryRes.Items[0];
+//   if (!pk?.S || !sk?.S) return;
+
+//   let updateExp = "SET inboundReplyText = :text, deliveryStatus = :status, hasReplied = :hasReplied, updatedAt = :now";
+//   let expValues: any = {
+//     ":text": { S: String(inboundText) },
+//     ":status": { S: "REPLIED" },
+//     ":hasReplied": { BOOL: true }, 
+//     ":now": { S: new Date().toISOString() },
+//   };
+
+//   if (isInteractiveButton && buttonPayload.includes("CONTRIBUTE")) {
+//     updateExp += ", paymentStatus = :payStatus";
+//     expValues[":payStatus"] = { S: "LINK_SENT" };
+//     console.log(`Payment triggered for ${message.from}. Send Payment URL now!`);
+//   }
+
+//   await ddb.send(new UpdateItemCommand({
+//     TableName: TABLE_NAME,
+//     Key: { pk: pk, sk: sk },
+//     UpdateExpression: updateExp,
+//     ExpressionAttributeValues: expValues,
+//   }));
+// }
+
+// // =====================================================================
+// // HELPER: Resolve Record & Update Status Receipts (Sent, Delivered, Read)
+// // =====================================================================
+// async function handleDeliveryStatus(statusObj: any) {
+//   const mappedStatus = (statusObj.status || "sent").toUpperCase();
+
+//   // 🚨 TRAP FOR FAILED MESSAGES
+//   if (mappedStatus === "FAILED") {
+//     console.log("🚨 META DELIVERY FAILED. Error Details:", JSON.stringify(statusObj.errors || statusObj, null, 2));
+//   }
+
+//   const queryRes = await ddb.send(new QueryCommand({
+//     TableName: TABLE_NAME,
+//     IndexName: "ByStatusOrWamid",
+//     KeyConditionExpression: "gsi1pk = :wamid",
+//     ExpressionAttributeValues: { ":wamid": { S: `MSG#${statusObj.id}` } },
+//   }));
+
+//   if (!queryRes.Items || queryRes.Items.length === 0) return;
+
+//   const { pk, sk } = queryRes.Items[0];
+
+//   let updateExp = "SET deliveryStatus = :status, updatedAt = :now";
+//   let expValues: any = {
+//     ":status": { S: mappedStatus },
+//     ":now": { S: new Date().toISOString() },
+//   };
+
+//   // Only update isRead if the status is actually read, preventing it from flipping back to false
+//   if (mappedStatus === "READ") {
+//     updateExp += ", isRead = :isRead";
+//     expValues[":isRead"] = { BOOL: true };
+//   }
+
+//   await ddb.send(new UpdateItemCommand({
+//     TableName: TABLE_NAME,
+//     Key: { pk: pk, sk: sk },
+//     UpdateExpression: updateExp,
+//     ExpressionAttributeValues: expValues,
+//   }));
+// }
 import { DynamoDBClient, QueryCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 
 const ddb = new DynamoDBClient({});
 const TABLE_NAME = process.env.TABLE_NAME!;
 const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
 
-// Status progression weights to prevent race conditions from out-of-order webhooks
-const STATUS_WEIGHTS: Record<string, number> = {
-  sent: 1,
-  delivered: 2,
-  read: 3,
-  replied: 4,
-  failed: 0,
-};
-
 export const handler = async (event: any) => {
-  console.log("Received webhook event:", JSON.stringify(event));
-
   const httpMethod = event.requestContext?.http?.method || event.httpMethod;
 
-  // =====================================================================
-  // 1. META WEBHOOK VERIFICATION (GET)
-  // =====================================================================
   if (httpMethod === "GET") {
     const queryParams = event.queryStringParameters || {};
-    const mode = queryParams["hub.mode"];
-    const token = queryParams["hub.verify_token"];
-    const challenge = queryParams["hub.challenge"];
-
-    if (mode === "subscribe" && token === META_VERIFY_TOKEN) {
-      console.log("Webhook verified successfully");
-      return {
-        statusCode: 200,
-        headers: { "Content-Type": "text/plain" },
-        body: challenge,
-      };
-    } else {
-      console.warn("Webhook verification failed: Token mismatch");
-      return { statusCode: 403, body: "Forbidden" };
+    if (queryParams["hub.mode"] === "subscribe" && queryParams["hub.verify_token"] === META_VERIFY_TOKEN) {
+      return { statusCode: 200, headers: { "Content-Type": "text/plain" }, body: queryParams["hub.challenge"] };
     }
+    return { statusCode: 403, body: "Forbidden" };
   }
 
-  // =====================================================================
-  // 2. INBOUND WEBHOOK PROCESSING (POST)
-  // =====================================================================
   if (httpMethod === "POST") {
     try {
       const body = JSON.parse(event.body || "{}");
+      
+      // 🟢 TRACER 1: Let's see the exact raw JSON Meta is sending us
+      console.log("📥 RAW META PAYLOAD:", JSON.stringify(body, null, 2));
 
       if (body.object === "whatsapp_business_account" && Array.isArray(body.entry)) {
         for (const entry of body.entry) {
           for (const change of entry.changes || []) {
             const value = change.value;
-
-            // 2a. Process Inbound Messages / Customer Replies
-            if (value?.messages && value.messages.length > 0) {
-              for (const message of value.messages) {
-                await handleInboundMessage(message);
-              }
+            
+            if (value?.messages?.length > 0) {
+              console.log("💬 INBOUND MESSAGE DETECTED");
+              for (const message of value.messages) await handleInboundMessage(message);
             }
-
-            // 2b. Process Delivery & Read Status Receipts
-            if (value?.statuses && value.statuses.length > 0) {
-              for (const status of value.statuses) {
-                await handleDeliveryStatus(status);
-              }
+            if (value?.statuses?.length > 0) {
+              console.log("📊 STATUS UPDATE DETECTED");
+              for (const status of value.statuses) await handleDeliveryStatus(status);
             }
           }
         }
       }
-
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ success: true }),
-      };
+      return { statusCode: 200, body: JSON.stringify({ success: true }) };
     } catch (error: any) {
-      console.error("Error processing webhook:", error);
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ error: error.message }),
-      };
+      console.error("❌ FATAL WEBHOOK ERROR:", error.message);
+      return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
     }
   }
-
-  return {
-    statusCode: 400,
-    body: "Invalid request method",
-  };
+  return { statusCode: 400, body: "Invalid method" };
 };
 
 // =====================================================================
-// HELPER: Resolve Record & Update Inbound Reply
+// HELPER: Resolve Record & Update Inbound Reply (Text & Buttons)
 // =====================================================================
 async function handleInboundMessage(message: any) {
-  // If the user is replying to a template message, context.id holds the original wamid
-  const targetWamid = message.context?.id || message.id;
-  const inboundText = message.text?.body || message.button?.text || "INTERACTIVE_REPLY";
-  const now = new Date().toISOString();
+  const targetWamid = message.context?.id; 
+  if (!targetWamid) {
+    console.log("⚠️ No context.id found. This is not a reply to a campaign.");
+    return;
+  }
 
-  console.log(`Processing inbound reply for target WAMID: ${targetWamid}`);
+  console.log(`🔍 Seeking Original WAMID for Reply: MSG#${targetWamid}`);
+
+  let inboundText = "";
+  let isInteractiveButton = false;
+  let buttonPayload = "";
+
+  if (message.type === "interactive" && message.interactive?.type === "button_reply") {
+    isInteractiveButton = true;
+    buttonPayload = message.interactive.button_reply.id; 
+    inboundText = message.interactive.button_reply.title;
+    console.log(`🔘 Button Clicked: ${inboundText} (Payload: ${buttonPayload})`);
+  }
 
   const queryRes = await ddb.send(new QueryCommand({
     TableName: TABLE_NAME,
-    IndexName: "getByWhatsAppMessageId",
+    IndexName: "ByStatusOrWamid",
     KeyConditionExpression: "gsi1pk = :wamid",
-    ExpressionAttributeValues: {
-      ":wamid": { S: `MSG#${targetWamid}` },
-    },
+    ExpressionAttributeValues: { ":wamid": { S: `MSG#${targetWamid}` } },
   }));
 
   if (!queryRes.Items || queryRes.Items.length === 0) {
-    console.warn(`No record found matching GSI1: MSG#${targetWamid}`);
+    console.log(`❌ GSI QUERY FAILED: Could not find ledger record for MSG#${targetWamid}`);
     return;
   }
 
-  const item = queryRes.Items[0];
-  const pk = item.pk?.S;
-  const sk = item.sk?.S;
+  const { pk, sk } = queryRes.Items[0];
+  console.log(`✅ Found Record for Reply - PK: ${pk.S} | SK: ${sk.S}`);
 
-  if (!pk || !sk) {
-    console.warn("Record found but missing primary keys.");
-    return;
+  let updateExp = "SET inboundReplyText = :text, deliveryStatus = :status, hasReplied = :hasReplied, updatedAt = :now";
+  let expValues: any = {
+    ":text": { S: String(inboundText) },
+    ":status": { S: "REPLIED" },
+    ":hasReplied": { BOOL: true }, 
+    ":now": { S: new Date().toISOString() },
+  };
+
+  if (isInteractiveButton && buttonPayload.includes("CONTRIBUTE")) {
+    updateExp += ", paymentStatus = :payStatus";
+    expValues[":payStatus"] = { S: "LINK_SENT" };
+    console.log(`💸 Contribution Triggered! Updating paymentStatus to LINK_SENT`);
   }
 
-  await ddb.send(new UpdateItemCommand({
-    TableName: TABLE_NAME,
-    Key: {
-      pk: { S: pk },
-      sk: { S: sk },
-    },
-    UpdateExpression: "SET inboundReplyText = :text, deliveryStatus = :status, statusWeight = :weight, updatedAt = :now",
-    ExpressionAttributeValues: {
-      ":text": { S: String(inboundText) },
-      ":status": { S: "REPLIED" },
-      ":weight": { N: String(STATUS_WEIGHTS["replied"]) },
-      ":now": { S: now },
-    },
-  }));
-
-  console.log(`Updated inbound reply for pk=${pk}, sk=${sk}`);
+  try {
+    await ddb.send(new UpdateItemCommand({
+      TableName: TABLE_NAME,
+      Key: { pk: pk, sk: sk },
+      UpdateExpression: updateExp,
+      ExpressionAttributeValues: expValues,
+    }));
+    console.log("💾 DB Reply Update Successful!");
+  } catch (err: any) {
+    console.error("❌ DB Reply Update Failed:", err.message);
+  }
 }
 
 // =====================================================================
-// HELPER: Resolve Record & Update Status Receipts
+// HELPER: Resolve Record & Update Status Receipts (Sent, Delivered, Read)
 // =====================================================================
 async function handleDeliveryStatus(statusObj: any) {
-  const wamid = statusObj.id;
-  const rawStatus = statusObj.status?.toLowerCase() || "sent";
-  const mappedStatus = rawStatus.toUpperCase();
-  const weight = STATUS_WEIGHTS[rawStatus] ?? 0;
-  const now = new Date().toISOString();
-
-  console.log(`Processing status receipt: ${mappedStatus} for WAMID: ${wamid}`);
+  const mappedStatus = (statusObj.status || "sent").toUpperCase();
+  console.log(`📡 Processing Status: ${mappedStatus} for WAMID: ${statusObj.id}`);
 
   const queryRes = await ddb.send(new QueryCommand({
     TableName: TABLE_NAME,
-    IndexName: "getByWhatsAppMessageId",
+    IndexName: "ByStatusOrWamid",
     KeyConditionExpression: "gsi1pk = :wamid",
-    ExpressionAttributeValues: {
-      ":wamid": { S: `MSG#${wamid}` },
-    },
+    ExpressionAttributeValues: { ":wamid": { S: `MSG#${statusObj.id}` } },
   }));
 
   if (!queryRes.Items || queryRes.Items.length === 0) {
-    console.warn(`No record found matching GSI1: MSG#${wamid}`);
+    console.log(`❌ GSI QUERY FAILED: Could not find ledger record for MSG#${statusObj.id}`);
     return;
   }
 
-  const item = queryRes.Items[0];
-  const pk = item.pk?.S;
-  const sk = item.sk?.S;
+  const { pk, sk } = queryRes.Items[0];
+  console.log(`✅ Found Record for Status Update - PK: ${pk.S} | SK: ${sk.S}`);
 
-  if (!pk || !sk) return;
+  let updateExp = "SET deliveryStatus = :status, updatedAt = :now";
+  let expValues: any = {
+    ":status": { S: mappedStatus },
+    ":now": { S: new Date().toISOString() },
+  };
+
+  if (mappedStatus === "READ") {
+    updateExp += ", isRead = :isRead";
+    expValues[":isRead"] = { BOOL: true };
+    console.log("👀 Status is READ, appending isRead = true");
+  }
 
   try {
-    // ConditionExpression prevents a delayed 'DELIVERED' webhook from overriding 'READ' or 'REPLIED'
     await ddb.send(new UpdateItemCommand({
       TableName: TABLE_NAME,
-      Key: {
-        pk: { S: pk },
-        sk: { S: sk },
-      },
-      UpdateExpression: "SET deliveryStatus = :status, statusWeight = :weight, updatedAt = :now",
-      ConditionExpression: "attribute_not_exists(statusWeight) OR statusWeight < :weight",
-      ExpressionAttributeValues: {
-        ":status": { S: mappedStatus },
-        ":weight": { N: String(weight) },
-        ":now": { S: now },
-      },
+      Key: { pk: pk, sk: sk },
+      UpdateExpression: updateExp,
+      ExpressionAttributeValues: expValues,
     }));
-
-    console.log(`Updated status to ${mappedStatus} for pk=${pk}, sk=${sk}`);
+    console.log(`💾 DB Status Update (${mappedStatus}) Successful!`);
   } catch (err: any) {
-    if (err.name === "ConditionalCheckFailedException") {
-      console.log(`Ignored out-of-order status (${mappedStatus}) for pk=${pk}, sk=${sk}`);
-      return;
-    }
-    throw err;
+    console.error(`❌ DB Status Update Failed:`, err.message);
   }
 }
