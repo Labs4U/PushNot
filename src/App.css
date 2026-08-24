@@ -817,3 +817,27 @@ body {
     padding: 6px 10px;
   }
 }
+
+/* =====================================================================
+   RESPONSIVE 3-COLUMN FORM GRID (for CampaignsView form fields)
+   ===================================================================== */
+.form-grid-3col {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+}
+
+/* Responsive: 2 columns on medium screens */
+@media (max-width: 1200px) {
+  .form-grid-3col {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Responsive: 1 column on small screens */
+@media (max-width: 768px) {
+  .form-grid-3col {
+    grid-template-columns: 1fr;
+  }
+}

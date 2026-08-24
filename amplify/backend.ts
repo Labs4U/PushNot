@@ -80,3 +80,6 @@ backend.addOutput({
     OutboundQueueUrl: outboundMainQueue.queueUrl,
   },
 });
+backend.data.resources.tables["PushNotSystem"].grantReadWriteData(
+  backend.dispatchBroadcast.resources.lambda
+);

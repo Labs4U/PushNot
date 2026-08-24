@@ -13,9 +13,22 @@ export const handler = async (event: any) => {
     
     try {
       const payload = JSON.parse(record.body);
-      const { associationId, campaignRunId, recipientPhone, recipientName, templateName, campaignMessage, associationName, templateLanguage } = payload;      
+      
+      // 1. Extract the correctly formatted variables dispatched by the new Dispatcher
+      const { 
+        associationId, 
+        campaignRunSk,     // Expects: RUN#<timestamp>#CAMP#<id>
+        baseCampaignSk,    // Expects: CAMP#<id>
+        recipientPhone, 
+        recipientName, 
+        templateName, 
+        campaignMessage, 
+        associationName, 
+        templateLanguage 
+      } = payload;      
+      
       const cleanTemplateName = (templateName || "campaign_msg").trim();
-      const cleanLanguageCode = (templateLanguage || "en").trim(); // Default to "en" if missing
+      const cleanLanguageCode = (templateLanguage || "en").trim(); 
 
       const metaPayload = {
         messaging_product: "whatsapp",
@@ -28,9 +41,7 @@ export const handler = async (event: any) => {
           components: [
             {
               type: "header",
-              parameters: [
-                { type: "text", text: associationName || "Association" } 
-              ]
+              parameters: [ { type: "text", text: associationName || "Association" } ]
             },
             {
               type: "body",
@@ -44,7 +55,8 @@ export const handler = async (event: any) => {
               sub_type: "quick_reply",
               index: "0", 
               parameters: [
-                { type: "payload", payload: `ACTION_CONTRIBUTE_${campaignRunId}` } 
+                // Uses the base campaign ID for standard payload tracking
+                { type: "payload", payload: `ACTION_CONTRIBUTE_${baseCampaignSk}` } 
               ]
             }
           ]
@@ -70,37 +82,51 @@ export const handler = async (event: any) => {
 
       const wamid = metaData.messages?.[0]?.id;
 
-      // --- THE ARCHITECTURE UPDATES ---
-      // 1. Isolate the Ledger Record with "RUN#"
-      const runSk = `RUN#${campaignRunId}#${recipientPhone}`; 
-      // 2. Set up the Member History Pivot Index
+      // 2. Construct the Ledger Sort Key
+      const ledgerSk = `${campaignRunSk}#MEM#${recipientPhone}`; 
       const gsi2pk = `${associationId}#MEM#${recipientPhone}`; 
 
+      // 3. Write the Individual Ledger Record to DynamoDB
       await ddb.send(
         new UpdateItemCommand({
           TableName: TABLE_NAME,
           Key: {
             pk: { S: associationId },
-            sk: { S: runSk },
+            sk: { S: ledgerSk }, 
           },
-          // 🟢 FIX 1: Added gsi1sk = :gsi1sk to the UpdateExpression
-          UpdateExpression: "SET entityType = :type, whatsappMessageId = :wamid, gsi1pk = :gsi1pk, gsi1sk = :gsi1sk, gsi2pk = :gsi2pk, gsi2sk = :gsi2sk, deliveryStatus = :status, isRead = :isRead, hasPaid = :hasPaid, hasReplied = :hasReplied, paymentStatus = :payStatus, updatedAt = :now",
+          UpdateExpression: "SET entityType = :type, #tn = :typename, whatsappMessageId = :wamid, gsi1pk = :gsi1pk, gsi1sk = :gsi1sk, gsi2pk = :gsi2pk, gsi2sk = :gsi2sk, deliveryStatus = :status, isRead = :isRead, hasPaid = :hasPaid, hasReplied = :hasReplied, paymentStatus = :payStatus, updatedAt = :now",
+          ExpressionAttributeNames: {
+            "#tn": "__typename" // Crucial fix for React UI visibility
+          },
           ExpressionAttributeValues: {
-            ":type": { S: "CAMPAIGN_RUN" },
+            ":type": { S: "CAMPAIGN_LEDGER" }, // Changed from CAMPAIGN_RUN
+            ":typename": { S: "PushNotSystem" },
             ":wamid": { S: wamid },
             ":gsi1pk": { S: `MSG#${wamid}` }, 
-            
-            // 🟢 FIX 2: Added a dummy value for the Sort Key so DynamoDB indexes it!
             ":gsi1sk": { S: "WEBHOOK" }, 
-            
             ":gsi2pk": { S: gsi2pk },
-            ":gsi2sk": { S: campaignRunId },
+            ":gsi2sk": { S: campaignRunSk },
             ":status": { S: "SENT" },
             ":isRead": { BOOL: false },
             ":hasPaid": { BOOL: false },
             ":hasReplied": { BOOL: false },
             ":payStatus": { S: "PENDING" },
             ":now": { S: new Date().toISOString() },
+          },
+        })
+      );
+
+      // 4. Update the Base Member Profile (Increment stats!)
+      await ddb.send(
+        new UpdateItemCommand({
+          TableName: TABLE_NAME,
+          Key: { 
+            pk: { S: associationId }, 
+            sk: { S: `MEM#${recipientPhone}` } 
+          },
+          UpdateExpression: "ADD totalCampaignsReceived :inc",
+          ExpressionAttributeValues: { 
+            ":inc": { N: "1" } 
           },
         })
       );

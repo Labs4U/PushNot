@@ -35,6 +35,7 @@ const schema = a.schema({
     name: a.string(),          // Member or Association name
     phone: a.string(),         // Member phone number
     address: a.string(),
+    gender: a.string(),
     optIn: a.boolean(),        // Global opt-in for the member
 
     totalCampaignsReceived: a.integer(),
@@ -51,6 +52,7 @@ const schema = a.schema({
     status: a.string(),        // 'DRAFT', 'RUNNING', 'COMPLETED'
     type: a.string(),          // 'ANNOUNCEMENT', 'FUNDRAISER'
     targetAmount: a.float(),   // Overall campaign goal
+    recipientCount: a.integer(),
 
     // --- 7. Campaign Run (Target/Ledger) Attributes ---
     deliveryStatus: a.string(),// 'QUEUED', 'SENT', 'DELIVERED', 'READ'
@@ -88,6 +90,10 @@ const schema = a.schema({
     .arguments({
       associationId: a.string().required(),
       campaignRunId: a.string().required(),
+      minEngagementRate: a.float(),
+      minConversionRate: a.float(),
+      targetRegion: a.string(),
+      targetGenders: a.string().array(),
     })
     .returns(a.json())
     .authorization((allow) => [

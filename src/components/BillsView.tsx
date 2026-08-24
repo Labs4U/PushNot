@@ -23,11 +23,14 @@ const BillsView: React.FC = () => {
         }
       );
 
-      if (data) {
-        setRecords(data);
+      if (data && Array.isArray(data)) {
+        // Filter out null/undefined entries
+        const validRecords = data.filter((item: any) => item != null);
+        setRecords(validRecords);
+        console.log('✅ Bills data loaded:', validRecords.length, 'records');
       }
     } catch (err) {
-      console.error('Error fetching contribution records:', err);
+      console.error('❌ Error fetching contribution records:', err);
     } finally {
       setLoading(false);
     }
@@ -39,12 +42,12 @@ const BillsView: React.FC = () => {
 
   const filtered = filterStatus === 'ALL'
     ? records
-    : records.filter((r) => r.paymentStatus === filterStatus || r.deliveryStatus === filterStatus);
+    : records.filter((r) => r && (r.paymentStatus === filterStatus || r.deliveryStatus === filterStatus));
 
-  // Compute summary statistics
-  const totalContributions = records.reduce((acc, curr) => acc + (curr.paymentAmount || 0), 0);
-  const paidCount = records.filter((r) => r.paymentStatus === 'PAID').length;
-  const pendingCount = records.filter((r) => r.paymentStatus === 'PENDING' || r.paymentStatus === 'LINK_SENT').length;
+  // Compute summary statistics with null-safety
+  const totalContributions = records.reduce((acc, curr) => acc + (curr?.paymentAmount || 0), 0);
+  const paidCount = records.filter((r) => r && r.paymentStatus === 'PAID').length;
+  const pendingCount = records.filter((r) => r && (r.paymentStatus === 'PENDING' || r.paymentStatus === 'LINK_SENT')).length;
 
   return (
     <div className="view-single-col">
@@ -191,6 +194,8 @@ const BillsView: React.FC = () => {
                   </thead>
                   <tbody>
                     {filtered.map((item) => {
+                      if (!item) return null; // Skip null entries
+
                       const deliveryColor =
                         item.deliveryStatus === 'READ'
                           ? '#10b981'

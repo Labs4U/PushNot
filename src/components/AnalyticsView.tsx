@@ -21,14 +21,21 @@ const AnalyticsView: React.FC = () => {
           }
         );
 
-        if (data) {
-          const campList = data.filter((item) => item.entityType === 'CAMPAIGN');
-          const runList = data.filter((item) => item.entityType === 'CAMPAIGN_RUN');
+        if (data && Array.isArray(data)) {
+          // Filter out null/undefined entries
+          const validData = data.filter((item: any) => item != null);
+          
+          // Then filter by entity type
+          const campList = validData.filter((item: any) => item.entityType === 'CAMPAIGN');
+          const runList = validData.filter((item: any) => item.entityType === 'CAMPAIGN_RUN');
+          
           setCampaigns(campList);
           setRuns(runList);
+          
+          console.log('✅ Analytics loaded:', { campaigns: campList.length, runs: runList.length });
         }
       } catch (err) {
-        console.error('Failed to load analytics:', err);
+        console.error('❌ Failed to load analytics:', err);
       } finally {
         setLoading(false);
       }
@@ -37,13 +44,13 @@ const AnalyticsView: React.FC = () => {
     loadAnalytics();
   }, []);
 
-  // Compute metrics
-  const totalCollected = runs.reduce((acc, curr) => acc + (curr.paymentAmount || 0), 0);
-  const totalTarget = campaigns.reduce((acc, curr) => acc + (curr.targetAmount || 0), 0);
+  // Compute metrics with null-safety
+  const totalCollected = runs.reduce((acc, curr) => acc + (curr?.paymentAmount || 0), 0);
+  const totalTarget = campaigns.reduce((acc, curr) => acc + (curr?.targetAmount || 0), 0);
   const totalSent = runs.length;
-  const deliveredCount = runs.filter((r) => r.deliveryStatus && r.deliveryStatus !== 'QUEUED' && r.deliveryStatus !== 'FAILED').length;
-  const readCount = runs.filter((r) => r.deliveryStatus === 'READ' || r.deliveryStatus === 'REPLIED').length;
-  const replyCount = runs.filter((r) => r.deliveryStatus === 'REPLIED').length;
+  const deliveredCount = runs.filter((r) => r && r.deliveryStatus && r.deliveryStatus !== 'QUEUED' && r.deliveryStatus !== 'FAILED').length;
+  const readCount = runs.filter((r) => r && (r.deliveryStatus === 'READ' || r.deliveryStatus === 'REPLIED')).length;
+  const replyCount = runs.filter((r) => r && r.deliveryStatus === 'REPLIED').length;
 
   const deliveryRate = totalSent > 0 ? Math.round((deliveredCount / totalSent) * 100) : 0;
   const readRate = totalSent > 0 ? Math.round((readCount / totalSent) * 100) : 0;
@@ -196,8 +203,10 @@ const AnalyticsView: React.FC = () => {
                   </thead>
                   <tbody>
                     {campaigns.map((camp) => {
-                      const campRuns = runs.filter((r) => r.sk?.startsWith(`${camp.sk}#`));
-                      const campRaised = campRuns.reduce((acc, curr) => acc + (curr.paymentAmount || 0), 0);
+                      if (!camp) return null; // Skip null campaigns
+                      
+                      const campRuns = runs.filter((r) => r && r.sk?.startsWith(`${camp.sk}#`));
+                      const campRaised = campRuns.reduce((acc, curr) => acc + (curr?.paymentAmount || 0), 0);
                       const progress = camp.targetAmount ? Math.min(100, Math.round((campRaised / camp.targetAmount) * 100)) : 0;
 
                       return (
