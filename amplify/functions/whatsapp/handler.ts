@@ -5,6 +5,8 @@ const TABLE_NAME = process.env.TABLE_NAME!;
 const VERIFY_TOKEN = "your_secure_verify_token"; // Ensure this matches your Meta portal
 
 export const handler = async (event: any) => {
+  console.log("🔥 WEBHOOK HIT! Incoming Event:", event.body || event.queryStringParameters);
+
   // 1. Meta Webhook Verification
   if (event.requestContext?.http?.method === "GET") {
     const queryParams = event.queryStringParameters || {};
@@ -28,7 +30,7 @@ export const handler = async (event: any) => {
       if (statusString === "read") {
         const queryRes = await ddb.send(new QueryCommand({
           TableName: TABLE_NAME,
-          IndexName: "gsi1", // ⚠️ Update this if your GSI1 index has a different name in resource.ts
+          IndexName: "ByStatusOrWamid", // 🟢 Updated to match your schema!
           KeyConditionExpression: "gsi1pk = :wamid",
           ExpressionAttributeValues: { ":wamid": { S: `MSG#${wamid}` } }
         }));
@@ -69,7 +71,7 @@ export const handler = async (event: any) => {
       // 2. Find and update their latest Campaign Ledger
       const queryRes = await ddb.send(new QueryCommand({
         TableName: TABLE_NAME,
-        IndexName: "gsi2", // ⚠️ Update this to your actual GSI2 index name (e.g., "ByMemberHistory")
+        IndexName: "ByMemberHistory", // 🟢 Updated to match your schema!
         KeyConditionExpression: "gsi2pk = :gsi2pk",
         ExpressionAttributeValues: { ":gsi2pk": { S: `${associationId}#MEM#${senderPhone}` } },
         ScanIndexForward: false, // Pulls the most recent ledger record first
