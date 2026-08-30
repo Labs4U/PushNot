@@ -26,11 +26,27 @@ export const handler = async (event: any) => {
         templateName,
         campaignMessage,
         associationName,
-        templateLanguage,
+        // templateLanguage intentionally omitted — language is derived from templateName
       } = payload;
 
-      const cleanTemplateName = (templateName  || "campaign_msg").trim();
-      const cleanLanguageCode = (templateLanguage || "en").trim();
+      const cleanTemplateName = (templateName || "campaign_msg").trim();
+
+      // Derive the language code from the template name so the payload is always
+      // consistent — even if the caller omits templateLanguage or passes a stale value.
+      //
+      // Convention used in the Meta Business dashboard:
+      //   campaign_msg      → registered under "en"  (English)
+      //   campaign_msg_ar   → registered under "ar"  (Arabic)
+      //
+      // Rule: if the template name ends with "_ar", use "ar"; otherwise use "en".
+      // Extend this map as new language variants are added to the Meta dashboard.
+      const TEMPLATE_LANGUAGE_MAP: Record<string, string> = {
+        campaign_msg:    "en",
+        campaign_msg_ar: "ar",
+      };
+      const cleanLanguageCode: string =
+        TEMPLATE_LANGUAGE_MAP[cleanTemplateName]          // exact match wins
+        ?? (cleanTemplateName.endsWith("_ar") ? "ar" : "en"); // suffix fallback
 
       // ── Send WhatsApp message via Meta Cloud API ──────────────────────────
       const metaPayload = {
@@ -102,19 +118,23 @@ export const handler = async (event: any) => {
           sk: { S: ledgerSk },
         },
         UpdateExpression: [
-          "SET entityType      = :type",
-          "    #tn             = :typename",
+          "SET entityType        = :type",
+          "    #tn               = :typename",
           "    whatsappMessageId = :wamid",
-          "    gsi1pk          = :gsi1pk",
-          "    gsi1sk          = :gsi1sk",
-          "    gsi2pk          = :gsi2pk",
-          "    gsi2sk          = :gsi2sk",
-          "    deliveryStatus  = :status",
-          "    isRead          = :false",
-          "    hasPaid         = :false",
-          "    hasReplied      = :false",
-          "    paymentStatus   = :payStatus",
-          "    updatedAt       = :now",
+          "    gsi1pk            = :gsi1pk",
+          "    gsi1sk            = :gsi1sk",
+          "    gsi2pk            = :gsi2pk",
+          "    gsi2sk            = :gsi2sk",
+          "    deliveryStatus    = :status",
+          "    isRead            = :false",
+          "    hasPaid           = :false",
+          "    hasReplied        = :false",
+          "    paymentStatus     = :payStatus",
+          "    updatedAt         = :now",
+          // Amplify Gen 2 declares createdAt as non-nullable in AppSync schema.
+          // UpdateItem never auto-sets it — use if_not_exists so the first write
+          // sets it and subsequent status updates (delivered/read) preserve it.
+          "    createdAt         = if_not_exists(createdAt, :now)",
         ].join(", "),
         ExpressionAttributeNames: {
           "#tn": "__typename",
