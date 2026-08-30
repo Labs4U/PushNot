@@ -42,6 +42,9 @@ export default function CampaignsView({ associationId }: CampaignsViewProps) {
   // ── Campaign list state ───────────────────────────────────────────────────
   const [campaigns,        setCampaigns]        = useState<any[]>([]);
   const [loadingCampaigns, setLoadingCampaigns] = useState(true);
+  // CAMPRUN#<id> summary records written by dispatchBroadcast
+  // recipientCount lives here, not on the CAMPAIGN record
+  const [runSummaries, setRunSummaries] = useState<Record<string, number>>({});
 
   // ── Campaign detail drill-down state ─────────────────────────────────────
   const [selectedCampaign,    setSelectedCampaign]    = useState<any | null>(null);
@@ -66,7 +69,33 @@ export default function CampaignsView({ associationId }: CampaignsViewProps) {
         nextToken = response.nextToken;
       } while (nextToken);
 
-      setCampaigns(allItems.filter((i: any) => i.entityType === 'CAMPAIGN'));
+      const campItems = allItems.filter((i: any) => i.entityType === 'CAMPAIGN');
+      setCampaigns(campItems);
+
+      // Fetch CAMPRUN summary records (sk = CAMPRUN#<id>, no MEM# segment)
+      // to get recipientCount written by dispatchBroadcast
+      let summaryItems: any[] = [];
+      let summaryToken: string | null | undefined = undefined;
+      do {
+        const summaryRes: any = await client.models.PushNotSystem.list({
+          filter: { pk: { eq: associationId }, sk: { beginsWith: 'CAMPRUN#' } },
+          ...(summaryToken ? { nextToken: summaryToken } : {}),
+          authMode: 'userPool',
+        });
+        summaryItems = summaryItems.concat((summaryRes.data || []).filter((i: any) =>
+          i != null && typeof i.sk === 'string' && !i.sk.includes('#MEM#')
+        ));
+        summaryToken = summaryRes.nextToken;
+      } while (summaryToken);
+
+      // Build a map: campIdRaw → recipientCount
+      const summaryMap: Record<string, number> = {};
+      for (const s of summaryItems) {
+        // sk = CAMPRUN#<campIdRaw>
+        const campIdRaw = (s.sk as string).replace(/^CAMPRUN#/, '');
+        summaryMap[campIdRaw] = s.recipientCount || 0;
+      }
+      setRunSummaries(summaryMap);
     } catch (err) {
       console.error('❌ fetchCampaigns error:', err);
       setCampaigns([]);
@@ -322,7 +351,13 @@ export default function CampaignsView({ associationId }: CampaignsViewProps) {
                       <td style={{ padding: '12px', color: '#cbd5e1' }}>{camp.title || 'Untitled'}</td>
                       <td style={{ padding: '12px' }}><StatusBadge status={camp.status} /></td>
                       <td style={{ padding: '12px', textAlign: 'right', color: '#cbd5e1' }}>
-                        {camp.recipientCount > 0 ? camp.recipientCount.toLocaleString() : '—'}
+                        {(() => {
+                          const campIdRaw = (camp.sk as string).replace(/^CAMP#/, '');
+                          const count = runSummaries[campIdRaw];
+                          return count != null && count > 0
+                            ? count.toLocaleString()
+                            : <span style={{ color: '#334155' }}>—</span>;
+                        })()}
                       </td>
                       <td style={{ padding: '12px', textAlign: 'center', color: '#cbd5e1' }}>
                         {camp.templateName?.includes('ar') ? '🇸🇦' : '🇬🇧'}
