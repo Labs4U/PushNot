@@ -26,8 +26,7 @@ const dispatchLambda = backend.dispatchBroadcast.resources.lambda;
 const processOutboundLambda = backend.processOutboundQueue.resources.lambda; // Reference the worker
 
 // Access the DynamoDB table from the data backend
-const dataTables = backend.data.resources.tables;
-const pushNotTable = Object.values(dataTables)[0]; 
+const pushNotTable = backend.data.resources.tables["PushNotSystem"]; 
 
 // Create a custom stack for the messaging infrastructure (SQS Queues)
 const customStack = backend.createStack('MessagingInfrastructure');
@@ -38,9 +37,11 @@ const webhookUrl = webhookLambda.addFunctionUrl({
 });
 
 // Configure the Outbound SQS Buffer Queue
+// Visibility timeout MUST exceed Lambda timeout (60s) + buffer
+// Using 120s to provide safety margin: 120s > 60s + 60s safety buffer
 const outboundMainQueue = new Queue(customStack, 'OutboundBroadcastQueue', {
   queueName: 'outbound-broadcast-queue',
-  visibilityTimeout: Duration.seconds(30),
+  visibilityTimeout: Duration.seconds(120),
 });
 
 // 3. Attach the SQS Event Source to the Consumer Lambda
@@ -64,13 +65,14 @@ webhookLambda.addToRolePolicy(
 );
 
 // B. Dispatch Broadcast Lambda Permissions
-pushNotTable.grantReadData(dispatchLambda);
+pushNotTable.grantReadWriteData(dispatchLambda);
 outboundMainQueue.grantSendMessages(dispatchLambda);
 backend.dispatchBroadcast.addEnvironment('TABLE_NAME', pushNotTable.tableName);
 backend.dispatchBroadcast.addEnvironment('OUTBOUND_QUEUE_URL', outboundMainQueue.queueUrl);
 
 // C. Process Outbound Queue Lambda Permissions (NEW)
 pushNotTable.grantReadWriteData(processOutboundLambda);
+outboundMainQueue.grantConsumeMessages(processOutboundLambda);
 backend.processOutboundQueue.addEnvironment('TABLE_NAME', pushNotTable.tableName);
 
 // Output endpoints and identifiers to the terminal after deployment
@@ -80,6 +82,3 @@ backend.addOutput({
     OutboundQueueUrl: outboundMainQueue.queueUrl,
   },
 });
-backend.data.resources.tables["PushNotSystem"].grantReadWriteData(
-  backend.dispatchBroadcast.resources.lambda
-);

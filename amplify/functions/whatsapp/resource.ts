@@ -5,6 +5,7 @@ export const whatsappWebhook = defineFunction({
   entry: './handler.ts',
   resourceGroupName: 'data',
   timeoutSeconds: 60,
+  runtime:20,
   environment: {
     // These pull securely from AWS Secrets Manager
     META_VERIFY_TOKEN: secret('META_VERIFY_TOKEN'),

@@ -3,7 +3,7 @@ import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '../../amplify/data/resource';
 
 const client = generateClient<Schema>();
-const CURRENT_ASSOCIATION_ID = 'ASSOC#101';
+
 
 // Inline SVG Info Icon
 const InfoIcon: React.FC<{ tooltip: string }> = ({ tooltip }) => {
@@ -120,7 +120,9 @@ const extractString = (val: any): string => {
 
 // ==================== MAIN COMPONENT ====================
 
-const MessagesView: React.FC = () => {
+interface MessagesViewProps { associationId: string; }
+
+const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
   // Campaign state
   const [campaigns, setCampaigns] = useState<any[]>([]);
   const [campaignSearch, setCampaignSearch] = useState('');
@@ -145,73 +147,86 @@ const MessagesView: React.FC = () => {
   const [targetRegion, setTargetRegion] = useState('All Regions');
   const [targetGenders, setTargetGenders] = useState<string[]>(['MALE', 'FEMALE']);
 
-  // ==================== RESILIENT MEMBER FETCH ====================
+  // ==================== MEMBER FETCH ====================
+  // Uses a server-side filter (pk + sk beginsWith) so AppSync scopes the query
+  // to this tenant's members only — no pagination gaps, no cross-tenant leakage.
+  // Runs whenever associationId changes (i.e. on first real mount after login).
   useEffect(() => {
-    async function fetchMembersOptimized() {
+    if (!associationId) return;
+
+    async function fetchMembers() {
       setLoadingMembers(true);
+      setAllMembers([]); // clear stale data from any previous associationId
       try {
-        console.log('🔄 Fetching all members with broad list strategy...');
+        console.log('🔄 Fetching members for tenant:', associationId);
 
-        // Broad fetch to guarantee data retrieval now that __typename exists
-        const { data, errors } = await client.models.PushNotSystem.list({
-          authMode: 'apiKey',
-        });
+        // Paginate manually: AppSync default page is 100 items.
+        // nextToken loop guarantees we collect all members regardless of roster size.
+        let allItems: any[] = [];
+        let nextToken: string | null | undefined = undefined;
 
-        console.log('👥 Raw backend response:', {
-          totalDataLength: data?.length || 0,
-          errorsCount: errors?.length || 0,
-        });
+        do {
+          const response: any = await client.models.PushNotSystem.list({
+            filter: {
+              pk: { eq: associationId },
+              sk: { beginsWith: 'MEM#' },
+            },
+            ...(nextToken ? { nextToken } : {}),
+            authMode: 'userPool',
+          });
 
-        if (errors && errors.length > 0) {
-          console.error('❌ Backend errors:', errors);
-        }
-
-        // Filter for members of this specific association in-memory
-        // Tenant isolation happens here: pk MUST match CURRENT_ASSOCIATION_ID AND sk MUST start with MEM#
-        const validMembers = (data || [])
-          .filter((item: any) => item != null)
-          .filter((item: any) => {
-            return (
-              item.pk === CURRENT_ASSOCIATION_ID &&
-              item.sk?.startsWith('MEM#')
+          // Partial GraphQL errors happen when boto3-seeded records are missing
+          // the auto-managed createdAt/updatedAt fields that Amplify Gen 2 adds.
+          // These errors are non-fatal: AppSync still returns the valid fields we
+          // care about (pk, sk, name, gender, address, etc.) alongside the error.
+          // We log them for visibility but always continue processing response.data.
+          if (response.errors && response.errors.length > 0) {
+            const isTimestampError = response.errors.every((e: any) =>
+              e.message?.includes('createdAt') || e.message?.includes('updatedAt')
             );
-          });
+            if (isTimestampError) {
+              console.warn(
+                `⚠️ ${response.errors.length} record(s) missing createdAt/updatedAt (boto3-seeded). ` +
+                `Re-run membersSeed.py with your Cognito sub to fix. Continuing with available data.`
+              );
+            } else {
+              console.error('❌ Backend errors:', response.errors);
+            }
+          }
 
-        console.log('✅ Valid MEMBER records for this association:', validMembers.length);
+          const page = (response.data || []).filter((item: any) => item != null);
+          allItems = allItems.concat(page);
+          nextToken = response.nextToken;
 
-        // Log sample member structure for debugging
-        if (validMembers.length > 0) {
-          const sample = validMembers[0];
-          console.log('📋 Sample member structure:', {
-            pk: `${sample.pk} (type: ${typeof sample.pk})`,
-            sk: `${sample.sk} (type: ${typeof sample.sk})`,
-            name: `${sample.name} (type: ${typeof sample.name})`,
-            engagementRatePercent: `${sample.engagementRatePercent} (type: ${typeof sample.engagementRatePercent}, raw: ${JSON.stringify(sample.engagementRatePercent)})`,
-            conversionRatePercent: `${sample.conversionRatePercent} (type: ${typeof sample.conversionRatePercent}, raw: ${JSON.stringify(sample.conversionRatePercent)})`,
-            gender: `${sample.gender} (type: ${typeof sample.gender}, raw: ${JSON.stringify(sample.gender)})`,
-            address: `${sample.address} (type: ${typeof sample.address}, raw: ${JSON.stringify(sample.address)})`,
-          });
-          
-          // Log extracted values to verify extractors work
-          console.log('🔍 Extracted sample values:', {
-            engagement: extractNumber(sample.engagementRatePercent),
-            conversion: extractNumber(sample.conversionRatePercent),
-            gender: extractString(sample.gender).toUpperCase(),
-            region: extractString(sample.address).trim(),
+          console.log(`📄 Page loaded: ${page.length} items, nextToken: ${nextToken ? 'yes' : 'none'}`);
+        } while (nextToken);
+
+        console.log('✅ Total members fetched:', allItems.length);
+
+        if (allItems.length > 0) {
+          const sample = allItems[0];
+          console.log('📋 Sample member:', {
+            pk: sample.pk,
+            sk: sample.sk,
+            name: sample.name,
+            engagementRatePercent: sample.engagementRatePercent,
+            conversionRatePercent: sample.conversionRatePercent,
+            gender: sample.gender,
+            address: sample.address,
           });
         }
 
-        setAllMembers(validMembers);
-      } catch (error) {
-        console.error('❌ Exception during member fetch:', error);
+        setAllMembers(allItems);
+      } catch (error: any) {
+        console.error('❌ Member fetch failed:', error.message ?? error);
         setAllMembers([]);
       } finally {
         setLoadingMembers(false);
       }
     }
 
-    fetchMembersOptimized();
-  }, []);
+    fetchMembers();
+  }, [associationId]); // re-runs if the logged-in tenant changes
 
   // ==================== GENDER CHECKBOX HANDLERS ====================
   const handleToggleGender = (gender: string) => {
@@ -290,12 +305,12 @@ const MessagesView: React.FC = () => {
   // ==================== FETCH CAMPAIGNS ====================
   const fetchCampaigns = async () => {
     try {
-      console.log('Fetching campaigns for association:', CURRENT_ASSOCIATION_ID);
+      console.log('Fetching campaigns for association:', associationId);
 
       const { data, errors } = await client.models.PushNotSystem.list(
         {
           filter: {
-            pk: { eq: CURRENT_ASSOCIATION_ID },
+            pk: { eq: associationId },
             sk: { beginsWith: 'CAMP#' },
           },
           authMode: 'apiKey',
@@ -316,8 +331,8 @@ const MessagesView: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchCampaigns();
-  }, []);
+    if (associationId) fetchCampaigns();
+  }, [associationId]); // re-fetch if tenant changes
 
   // Filter campaigns based on search input
   useEffect(() => {
@@ -369,10 +384,10 @@ const MessagesView: React.FC = () => {
 
         const { errors: createErrors } = await client.models.PushNotSystem.create(
           {
-            pk: CURRENT_ASSOCIATION_ID,
+            pk: associationId,
             sk: generatedCampId,
             entityType: 'CAMPAIGN',
-            gsi1pk: CURRENT_ASSOCIATION_ID,
+            gsi1pk: associationId,
             gsi1sk: 'STATUS#RUNNING',
             title: campaignSearch.trim() || 'Untitled Campaign',
             description: messageContent.trim(),
@@ -399,7 +414,7 @@ const MessagesView: React.FC = () => {
 
       const response = await client.mutations.triggerCampaignBroadcast(
         {
-          associationId: CURRENT_ASSOCIATION_ID,
+          associationId: associationId,
           campaignRunId: activeCampaignSk,
           minEngagementRate,
           minConversionRate,

@@ -3,9 +3,11 @@ import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '../../amplify/data/resource';
 
 const client = generateClient<Schema>();
-const CURRENT_ASSOCIATION_ID = 'ASSOC#101';
 
-const BillsView: React.FC = () => {
+
+interface BillsViewProps { associationId: string; }
+
+const BillsView: React.FC<BillsViewProps> = ({ associationId }) => {
   const [records, setRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
@@ -16,7 +18,7 @@ const BillsView: React.FC = () => {
       const { data } = await client.models.PushNotSystem.list(
         {
           filter: {
-            pk: { eq: CURRENT_ASSOCIATION_ID },
+            pk: { eq: associationId },
             entityType: { eq: 'CAMPAIGN_RUN' },
           },
           authMode: 'apiKey',

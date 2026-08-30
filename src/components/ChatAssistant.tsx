@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { generateClient } from 'aws-amplify/data';
-import type { Schema } from '../../amplify/data/resource';
+// import { generateClient } from 'aws-amplify/data';  // TODO: re-enable when chatAgent Lambda is active
+// import type { Schema } from '../../amplify/data/resource';
 
-const client = generateClient<Schema>();
+// const client = generateClient<Schema>(); // TODO: wire when chatAgent Lambda is active
 
 type Message = {
   id: string;

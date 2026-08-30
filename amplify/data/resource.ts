@@ -36,6 +36,7 @@ const schema = a.schema({
     phone: a.string(),         // Member phone number
     address: a.string(),
     gender: a.string(),
+    contactEmail: a.string(),
     optIn: a.boolean(),        // Global opt-in for the member
 
     totalCampaignsReceived: a.integer(),
