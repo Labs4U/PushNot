@@ -65,6 +65,10 @@ const schema = a.schema({
     isRead: a.boolean(),
     hasPaid: a.boolean(),
     hasReplied: a.boolean(),
+
+    // --- 8. AI Agent Fields ---
+    requiresAdminAction: a.boolean(), // set by chatAgent when member needs follow-up
+    inquirySummary: a.string(),        // AI-generated summary of the member's inquiry
     
   })
   .identifier(['pk', 'sk'])
@@ -102,20 +106,6 @@ const schema = a.schema({
       allow.publicApiKey(), 
     ])
     .handler(a.handler.function(dispatchBroadcast)),
-
-  // Mutation 2: Chat with Campaign Agent
-  // Routes to Strands SDK AgentCore Lambda for AI-powered message drafting
-  // PLACEHOLDER: Uncomment and add handler once chatAgent Lambda resource is defined
-  // chatWithCampaignAgent: a
-  //   .mutation()
-  //   .arguments({
-  //     associationId: a.string().required(),
-  //     memberPhone: a.string().required(),
-  //     messageText: a.string().required(),
-  //   })
-  //   .returns(a.string())
-  //   .authorization((allow) => [allow.authenticated()])
-  //   .handler(a.handler.function(chatAgent)),
 });
 
 export type Schema = ClientSchema<typeof schema>;

@@ -1,4 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { fetchAuthSession } from 'aws-amplify/auth';
 import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '../../amplify/data/resource';
 
@@ -50,6 +52,13 @@ export default function CampaignsView({ associationId }: CampaignsViewProps) {
   const [selectedCampaign,    setSelectedCampaign]    = useState<any | null>(null);
   const [ledgerRecords,       setLedgerRecords]       = useState<any[]>([]);
   const [loadingLedger,       setLoadingLedger]       = useState(false);
+  const [actionFilterOnly,    setActionFilterOnly]    = useState(false); // show only records flagged by chatAgent
+
+  // ── Campaign knowledge context (optional RAG document) ────────────────
+  const [campaignContext,  setCampaignContext]  = useState('');
+  const [ctxUploadStatus, setCtxUploadStatus]  = useState<'idle'|'uploading'|'done'|'error'>('idle');
+  const campaignFileRef = useRef<HTMLInputElement>(null);
+
 
   const templateMap: Record<string, string> = { en: 'campaign_msg', ar: 'campaign_msg_ar' };
 
@@ -147,6 +156,40 @@ export default function CampaignsView({ associationId }: CampaignsViewProps) {
   const activeCampaigns = campaigns.filter(c => c.status === 'ACTIVE' || c.status === 'RUNNING').length;
   const totalRecipients = campaigns.reduce((acc, c) => acc + (c.recipientCount || 0), 0);
 
+  // ── Upload campaign_info.txt to S3 RAG bucket ─────────────────────────────
+  async function uploadCampaignContext(campId: string, text: string) {
+    if (!text.trim()) return;
+    setCtxUploadStatus('uploading');
+    try {
+      const session = await fetchAuthSession();
+      const creds   = session.credentials;
+      if (!creds) throw new Error('No session credentials');
+      const s3 = new S3Client({
+        region: 'us-east-1',
+        credentials: {
+          accessKeyId:     creds.accessKeyId,
+          secretAccessKey: creds.secretAccessKey,
+          sessionToken:    creds.sessionToken,
+        },
+      });
+      // Key: ASSOC#<sub>/CAMP#<id>/campaign_info.txt
+      // Matches chatAgent: `${associationId}/CAMP#${campIdRaw}/campaign_info.txt`
+      const s3Key = `${associationId}/${campId}/campaign_info.txt`;
+      await s3.send(new PutObjectCommand({
+        Bucket:      'push-notifications-bh',
+        Key:         s3Key,
+        Body:        text,
+        ContentType: 'text/plain; charset=utf-8',
+      }));
+      console.log(`✅ Campaign context uploaded: s3://push-notifications-bh/${s3Key}`);
+      setCtxUploadStatus('done');
+      setTimeout(() => setCtxUploadStatus('idle'), 4000);
+    } catch (err: any) {
+      console.error('❌ Campaign context upload failed:', err.message);
+      setCtxUploadStatus('error');
+    }
+  }
+
   // ── Campaign create ───────────────────────────────────────────────────────
   const handleCreateCampaign = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -172,8 +215,12 @@ export default function CampaignsView({ associationId }: CampaignsViewProps) {
 
       if (errors?.length) throw new Error(errors[0].message);
 
+      // Upload campaign_info.txt if the admin provided knowledge context
+      if (campaignContext.trim()) {
+        await uploadCampaignContext(campId, campaignContext);
+      }
       setFeedback({ type: 'success', text: `Campaign "${title}" created and scheduled for ${new Date(launchDate).toLocaleDateString()}` });
-      setTitle(''); setDescription(''); setTargetAmount(''); setLanguage('en'); setLaunchDate('');
+      setTitle(''); setDescription(''); setTargetAmount(''); setLanguage('en'); setLaunchDate(''); setCampaignContext('');
       await fetchCampaigns();
     } catch (err: any) {
       setFeedback({ type: 'error', text: err.message || 'Failed to create campaign.' });
@@ -202,6 +249,37 @@ export default function CampaignsView({ associationId }: CampaignsViewProps) {
             <textarea rows={3} placeholder="Message content sent via WhatsApp…" value={description}
               onChange={e => setDescription(e.target.value)} disabled={isSubmitting}
               style={{ width: '100%', padding: '8px 12px', fontFamily: 'inherit' }} />
+          </div>
+          <div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              AI Knowledge Context
+              <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 400 }}>
+                (optional — injected into the Bedrock prompt when members ask about this campaign)
+              </span>
+            </label>
+            <textarea rows={3}
+              placeholder="Describe this campaign's goals, target amounts, FAQs… The chatAgent will use this context when members ask questions."
+              value={campaignContext}
+              onChange={e => setCampaignContext(e.target.value)}
+              disabled={isSubmitting}
+              style={{ width: '100%', padding: '8px 12px', fontFamily: 'inherit' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+              <input ref={campaignFileRef} type='file' accept='.txt,text/plain'
+                style={{ display: 'none' }}
+                onChange={async e => {
+                  const file = e.target.files?.[0];
+                  if (file) setCampaignContext(await file.text());
+                  if (campaignFileRef.current) campaignFileRef.current.value = '';
+                }} />
+              <button type='button' onClick={() => campaignFileRef.current?.click()}
+                style={{ padding: '4px 12px', fontSize: '12px', background: 'none',
+                  border: '1px solid #334155', borderRadius: '4px', color: '#94a3b8', cursor: 'pointer' }}>
+                📄 Load from .txt file
+              </button>
+              {ctxUploadStatus === 'uploading' && <span style={{ fontSize: '12px', color: '#64748b' }}>Uploading…</span>}
+              {ctxUploadStatus === 'done'      && <span style={{ fontSize: '12px', color: '#34d399' }}>✓ Campaign context uploaded</span>}
+              {ctxUploadStatus === 'error'     && <span style={{ fontSize: '12px', color: '#f87171' }}>✗ Upload failed</span>}
+            </div>
           </div>
           <div className="form-grid-3col">
             <div>
@@ -269,11 +347,26 @@ export default function CampaignsView({ associationId }: CampaignsViewProps) {
           {/* ── Drill-down: per-member ledger view ── */}
           {selectedCampaign ? (
             <div>
-              <div style={{ marginBottom: '12px', padding: '10px 14px', borderRadius: '6px',
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                marginBottom: '12px', padding: '10px 14px', borderRadius: '6px',
                 backgroundColor: 'rgba(59,130,246,0.08)', border: '1px solid #1e40af', color: '#93c5fd', fontSize: '13px' }}>
-                <strong>{selectedCampaign.title || selectedCampaign.sk}</strong>
-                &nbsp;·&nbsp;{ledgerRecords.length} recipients loaded
-                {loadingLedger && ' · loading…'}
+                <span>
+                  <strong>{selectedCampaign.title || selectedCampaign.sk}</strong>
+                  &nbsp;·&nbsp;{ledgerRecords.length} recipients loaded
+                  {loadingLedger && ' · loading…'}
+                  {ledgerRecords.filter((r: any) => r?.requiresAdminAction).length > 0 && (
+                    <span style={{ marginLeft: '10px', color: '#f87171', fontWeight: 700 }}>
+                      🚨 {ledgerRecords.filter((r: any) => r?.requiresAdminAction).length} action required
+                    </span>
+                  )}
+                </span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px',
+                  cursor: 'pointer', fontSize: '12px', color: '#94a3b8', userSelect: 'none' }}>
+                  <input type='checkbox' checked={actionFilterOnly}
+                    onChange={e => setActionFilterOnly(e.target.checked)}
+                    style={{ cursor: 'pointer' }} />
+                  Action Required Only
+                </label>
               </div>
 
               {loadingLedger ? (
@@ -286,14 +379,17 @@ export default function CampaignsView({ associationId }: CampaignsViewProps) {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                   <thead style={{ position: 'sticky', top: 0, backgroundColor: '#0f172a', zIndex: 10 }}>
                     <tr>
-                      {['Recipient', 'Delivery', 'Payment', 'Read', 'Replied', 'Record Key'].map(h => (
+                      {['⚠', 'Recipient', 'Delivery', 'Payment', 'Read', 'Replied', 'Inquiry Summary'].map(h => (
                         <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: '#94a3b8',
                           fontWeight: 600, borderBottom: '1px solid #334155' }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {ledgerRecords.map((rec, idx) => {
+                    {(actionFilterOnly
+                      ? ledgerRecords.filter((r: any) => r?.requiresAdminAction)
+                      : ledgerRecords
+                    ).map((rec, idx) => {
                       // sk = CAMPRUN#<campId>#MEM#<phone>#<ts>  — extract phone
                       const skParts  = (rec.sk as string).split('#');
                       const memIdx   = skParts.indexOf('MEM');
@@ -301,7 +397,15 @@ export default function CampaignsView({ associationId }: CampaignsViewProps) {
 
                       return (
                         <tr key={rec.sk} style={{ borderBottom: '1px solid #1e293b',
-                          backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(59,130,246,0.04)' }}>
+                          backgroundColor: rec.requiresAdminAction
+                            ? 'rgba(239,68,68,0.06)'
+                            : idx % 2 === 0 ? 'transparent' : 'rgba(59,130,246,0.04)' }}>
+                          {/* Alert icon */}
+                          <td style={{ padding: '10px 8px', textAlign: 'center', width: '28px' }}>
+                            {rec.requiresAdminAction
+                              ? <span title={rec.inquirySummary ?? ''} style={{ fontSize: '14px' }}>🚨</span>
+                              : <span style={{ color: '#1e293b' }}>—</span>}
+                          </td>
                           <td style={{ padding: '10px 12px', color: '#cbd5e1' }}>{rec.name || phone}</td>
                           <td style={{ padding: '10px 12px' }}>
                             <span style={{ color: deliveryColor(rec.deliveryStatus || ''), fontWeight: 500, fontSize: '12px' }}>
@@ -317,8 +421,12 @@ export default function CampaignsView({ associationId }: CampaignsViewProps) {
                           <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                             {rec.hasReplied ? '💬' : '—'}
                           </td>
-                          <td style={{ padding: '10px 12px', color: '#475569', fontSize: '11px', fontFamily: 'monospace' }}>
-                            {(rec.sk as string).slice(0, 40)}…
+                          {/* Inquiry Summary — populated by chatAgent when escalating */}
+                          <td style={{ padding: '10px 12px', color: rec.inquirySummary ? '#fbbf24' : '#334155',
+                            fontSize: '12px', maxWidth: '200px', overflow: 'hidden',
+                            textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            title={rec.inquirySummary ?? ''}>
+                            {rec.inquirySummary ?? '—'}
                           </td>
                         </tr>
                       );

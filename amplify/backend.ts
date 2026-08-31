@@ -1,15 +1,16 @@
-import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { PolicyStatement, Effect } from 'aws-cdk-lib/aws-iam';
 import { defineBackend } from '@aws-amplify/backend';
 import { FunctionUrlAuthType } from 'aws-cdk-lib/aws-lambda';
 import { Queue } from 'aws-cdk-lib/aws-sqs';
 import { Duration } from 'aws-cdk-lib';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 
-import { auth }                from './auth/resource';
-import { data }                from './data/resource';
-import { whatsappWebhook }     from './functions/whatsapp/resource';
-import { dispatchBroadcast }   from './functions/dispatchBroadcast/resource';
+import { auth }                 from './auth/resource';
+import { data }                 from './data/resource';
+import { whatsappWebhook }      from './functions/whatsapp/resource';
+import { dispatchBroadcast }    from './functions/dispatchBroadcast/resource';
 import { processOutboundQueue } from './functions/processOutboundQueue/resource';
+import { chatAgent }            from './functions/chatAgent/resource';
 
 const backend = defineBackend({
   auth,
@@ -17,78 +18,136 @@ const backend = defineBackend({
   whatsappWebhook,
   dispatchBroadcast,
   processOutboundQueue,
+  chatAgent,
 });
 
 // ── CDK construct handles ─────────────────────────────────────────────────────
-const webhookLambda        = backend.whatsappWebhook.resources.lambda;
-const dispatchLambda       = backend.dispatchBroadcast.resources.lambda;
+const webhookLambda         = backend.whatsappWebhook.resources.lambda;
+const dispatchLambda        = backend.dispatchBroadcast.resources.lambda;
 const processOutboundLambda = backend.processOutboundQueue.resources.lambda;
+const chatAgentLambda       = backend.chatAgent.resources.lambda;
 
-// Single, consistent table reference — explicit name, never array index
+// Single, consistent table reference
 const pushNotTable = backend.data.resources.tables["PushNotSystem"];
 
-// ── SQS messaging infrastructure (own stack to isolate from data stack) ───────
+// ── Messaging + AI infrastructure stack ──────────────────────────────────────
 const customStack = backend.createStack('MessagingInfrastructure');
 
-// Outbound broadcast buffer queue.
-// Visibility timeout (120s) > processOutboundQueue Lambda timeout (60s) — AWS requirement.
+// ── SQS: Outbound broadcast buffer ───────────────────────────────────────────
+// Visibility timeout (120s) > processOutboundQueue Lambda timeout (60s)
 const outboundMainQueue = new Queue(customStack, 'OutboundBroadcastQueue', {
   queueName: 'outbound-broadcast-queue',
   visibilityTimeout: Duration.seconds(120),
 });
 
-// SQS event source: worker Lambda triggered by queue messages
+// ── SQS: Inbound chat queue (text replies → chatAgent) ────────────────────────
+// Visibility timeout (90s) > chatAgent Lambda timeout (60s)
+const inboundChatQueue = new Queue(customStack, 'InboundChatQueue', {
+  queueName: 'inbound-chat-queue',
+  visibilityTimeout: Duration.seconds(90),
+});
+
+// ── S3: Reference the existing push-notifications-bh bucket ─────────────────
+// This is a pre-existing external bucket — NOT created by CDK.
+const RAG_BUCKET_NAME = "push-notifications-bh";
+
+// ── SQS event sources ────────────────────────────────────────────────────────
 processOutboundLambda.addEventSource(
   new SqsEventSource(outboundMainQueue, {
     batchSize: 10,
-    reportBatchItemFailures: true, // partial batch retry — failed messages stay in queue
+    reportBatchItemFailures: true,
   })
 );
 
-// Public Function URL for the Meta inbound webhook (no auth — Meta calls this)
+chatAgentLambda.addEventSource(
+  new SqsEventSource(inboundChatQueue, {
+    batchSize: 1,          // process one message at a time — Bedrock calls are slow
+    reportBatchItemFailures: true,
+  })
+);
+
+// ── Public Function URL for Meta inbound webhook ──────────────────────────────
 const webhookUrl = webhookLambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE,
 });
 
 // ── Shared GSI query policy ───────────────────────────────────────────────────
-// All three Lambdas need to query secondary indexes (GSI1: ByStatusOrWamid,
-// GSI2: ByMemberHistory). grantReadWriteData() covers base table actions but
-// NOT index queries — those require an explicit index ARN policy.
 const gsiQueryPolicy = new PolicyStatement({
-  actions: ['dynamodb:Query'],
+  actions:   ['dynamodb:Query'],
   resources: [`${pushNotTable.tableArn}/index/*`],
 });
 
+// ── Bedrock invocation policy for chatAgent ───────────────────────────────────
+const bedrockPolicy = new PolicyStatement({
+  effect:  Effect.ALLOW,
+  // bedrock:Converse is required by the cross-region inference profile API
+  actions: ['bedrock:InvokeModel', 'bedrock:Converse'],
+  resources: [
+    // All foundation models
+    'arn:aws:bedrock:*::foundation-model/*',
+    // Cross-region inference profiles (e.g. us.amazon.nova-lite-v1:0)
+    'arn:aws:bedrock:*:*:inference-profile/*',
+  ],
+});
+
 // ── A. Inbound Webhook Lambda ─────────────────────────────────────────────────
-// Reads delivery status updates via GSI1 (ByStatusOrWamid: MSG#<wamid>).
-// Reads member history via GSI2 (ByMemberHistory) to update ledger on reply.
 pushNotTable.grantReadWriteData(webhookLambda);
 webhookLambda.addToRolePolicy(gsiQueryPolicy);
-backend.whatsappWebhook.addEnvironment('TABLE_NAME', pushNotTable.tableName);
+inboundChatQueue.grantSendMessages(webhookLambda);
+backend.whatsappWebhook.addEnvironment('TABLE_NAME',             pushNotTable.tableName);
+backend.whatsappWebhook.addEnvironment('INBOUND_CHAT_QUEUE_URL', inboundChatQueue.queueUrl);
 
 // ── B. Dispatch Broadcast Lambda ──────────────────────────────────────────────
-// Reads all MEM# records via base table Query (pk + sk beginsWith MEM#).
-// Writes the CAMPRUN# summary record via PutItem.
-// Sends messages to SQS — needs SendMessage on the queue.
 pushNotTable.grantReadWriteData(dispatchLambda);
-dispatchLambda.addToRolePolicy(gsiQueryPolicy); // for future GSI1 campaign status lookups
+dispatchLambda.addToRolePolicy(gsiQueryPolicy);
 outboundMainQueue.grantSendMessages(dispatchLambda);
-backend.dispatchBroadcast.addEnvironment('TABLE_NAME',        pushNotTable.tableName);
+backend.dispatchBroadcast.addEnvironment('TABLE_NAME',         pushNotTable.tableName);
 backend.dispatchBroadcast.addEnvironment('OUTBOUND_QUEUE_URL', outboundMainQueue.queueUrl);
 
 // ── C. Process Outbound Queue Lambda ─────────────────────────────────────────
-// Writes CAMPRUN#<id>#MEM#<phone>#<ts> ledger records.
-// Increments totalCampaignsReceived on MEM# profile records.
-// Needs both base table write AND index query permission (gsi1pk lookup on DLQ retry).
 pushNotTable.grantReadWriteData(processOutboundLambda);
 processOutboundLambda.addToRolePolicy(gsiQueryPolicy);
 outboundMainQueue.grantConsumeMessages(processOutboundLambda);
 backend.processOutboundQueue.addEnvironment('TABLE_NAME', pushNotTable.tableName);
+
+// ── D. Chat Agent Lambda ──────────────────────────────────────────────────────
+pushNotTable.grantReadWriteData(chatAgentLambda);
+chatAgentLambda.addToRolePolicy(gsiQueryPolicy);
+inboundChatQueue.grantConsumeMessages(chatAgentLambda);
+
+chatAgentLambda.addToRolePolicy(new PolicyStatement({
+  effect:    Effect.ALLOW,
+  actions:   ['s3:GetObject'],
+  resources: [`arn:aws:s3:::${RAG_BUCKET_NAME}/*`],
+}));
+chatAgentLambda.addToRolePolicy(bedrockPolicy);
+backend.chatAgent.addEnvironment('TABLE_NAME',          pushNotTable.tableName);
+backend.chatAgent.addEnvironment('RAG_BUCKET_NAME',     RAG_BUCKET_NAME);
+backend.chatAgent.addEnvironment('WHATSAPP_PHONE_ID',   process.env.WHATSAPP_PHONE_ID ?? '');
+
+// ── E. Frontend Authenticated Role & Groups (S3 Uploads) ──────────────────────
+const s3UploadPolicy = new PolicyStatement({
+  effect: Effect.ALLOW,
+  actions: ['s3:PutObject'],
+  resources: [`arn:aws:s3:::${RAG_BUCKET_NAME}/ASSOC#*/mission.txt`],
+});
+
+// 1. Attach to the default authenticated role
+backend.auth.resources.authenticatedUserIamRole.addToPrincipalPolicy(s3UploadPolicy);
+
+// 2. Attach to all Cognito User Pool Group roles (Critical for Admin groups)
+if (backend.auth.resources.groups) {
+  Object.values(backend.auth.resources.groups).forEach((group) => {
+    group.role.addToPrincipalPolicy(s3UploadPolicy);
+  });
+}
 
 // ── Stack outputs ─────────────────────────────────────────────────────────────
 backend.addOutput({
   custom: {
     MetaWebhookEndpoint: webhookUrl.url,
     OutboundQueueUrl:    outboundMainQueue.queueUrl,
+    InboundChatQueueUrl: inboundChatQueue.queueUrl,
+    RagBucketName:       RAG_BUCKET_NAME,
   },
 });

@@ -12,6 +12,7 @@
   "dependencies": {
     "@aws-amplify/ui-react": "~6.13.2",
     "@aws-sdk/client-dynamodb": "^3.1115.0",
+    "@aws-sdk/client-s3": "^3.1121.0",
     "aws-amplify": "~6.15.10",
     "react": "~18.3.1",
     "react-dom": "~18.3.1"
@@ -23,6 +24,7 @@
   "devDependencies": {
     "@aws-amplify/backend": "~1.19.0",
     "@aws-amplify/backend-cli": "~1.8.1",
+    "@aws-sdk/client-bedrock-runtime": "^3.1121.0",
     "@eslint/compat": "~2.0.1",
     "@eslint/eslintrc": "~3.3.3",
     "@eslint/js": "~9.39.2",
