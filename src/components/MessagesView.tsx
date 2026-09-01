@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '../../amplify/data/resource';
 import MemberHistoryView from './MemberHistoryView';
+import MemberDetailsModal from './MemberDetailsModal';
 
 const client = generateClient<Schema>();
 
@@ -126,6 +127,10 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
 
   // ── Member history drill-down (GSI2) ─────────────────────────────────────
   const [historyMember, setHistoryMember] = useState<{ phone: string; name: string } | null>(null);
+
+  // ── Member details modal ──────────────────────────────────────────────────
+  const [modalLedgerRecord, setModalLedgerRecord] = useState<any | null>(null);
+  const [modalPhone,        setModalPhone]        = useState<string>('');
 
   // ── Fetch member roster ───────────────────────────────────────────────────
   useEffect(() => {
@@ -650,7 +655,10 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
                           const phone = phoneFromLedgerSk(rec.sk ?? '');
                           return (
                             <tr key={rec.sk}
-                              style={{ borderBottom: '1px solid #1e293b',
+                              onClick={() => { setModalLedgerRecord(rec); setModalPhone(phone); }}
+                              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(59,130,246,0.08)')}
+                              onMouseLeave={e => (e.currentTarget.style.backgroundColor = idx % 2 === 0 ? 'transparent' : 'rgba(59,130,246,0.03)')}
+                              style={{ borderBottom: '1px solid #1e293b', cursor: 'pointer',
                                 backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(59,130,246,0.03)' }}>
                               <td style={{ padding: '9px 10px', color: '#cbd5e1', fontFamily: 'monospace', fontSize: '12px' }}>
                                 {phone}
@@ -705,6 +713,18 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
           </div>
         </div>
       </div>
+      {/* ── Member Details Modal ── */}
+      {modalLedgerRecord && (
+        <MemberDetailsModal
+          ledgerRecord={modalLedgerRecord}
+          memberProfile={allMembers.find(m => {
+            const sk = m?.sk ?? '';
+            return sk === `MEM#${modalPhone}` || sk.endsWith(`#${modalPhone}`);
+          })}
+          phone={modalPhone}
+          onClose={() => { setModalLedgerRecord(null); setModalPhone(''); }}
+        />
+      )}
     </div>
   );
 };

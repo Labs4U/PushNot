@@ -68,6 +68,7 @@ const schema = a.schema({
 
     // --- 8. AI Agent Fields ---
     requiresAdminAction: a.boolean(), // set by chatAgent when member needs follow-up
+    chatAnalysis: a.json(),
     inquirySummary: a.string(),        // AI-generated summary of the member's inquiry
     
   })

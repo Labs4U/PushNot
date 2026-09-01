@@ -2,33 +2,26 @@
  * chatAgent Lambda
  *
  * Triggered by: InboundChatQueue (SQS)
- * Purpose:      AI-powered conversational agent for member inquiries.
+ * Purpose:      AI conversational agent with rolling JSON state memory.
  *
  * Architecture:
- *   1. S3-injection RAG  — fetches ASSOC#<tenantId>/mission.txt from S3 and
- *      injects the raw text into the Bedrock system prompt (no vector DB needed).
- *   2. Long-term memory  — queries GSI2 (ByMemberHistory) to build a campaign
- *      participation summary for the member.
- *   3. Short-term memory — fetches the last 10 CHAT_LOG records for this
- *      member + campaign to maintain conversational context.
- *   4. Bedrock invocation — Amazon Nova Lite via ConverseCommand with a tool definition
- *      for admin escalation.
- *   5. Tool execution     — if the model calls flag_for_admin, updates the ledger
- *      record with requiresAdminAction=true and inquirySummary=<summary>.
- *   6. Chat persistence   — writes both the user message and AI reply as
- *      CHAT_LOG records back to DynamoDB.
- *   7. WhatsApp reply     — sends the AI response via Meta Cloud API.
+ *   1. S3 RAG (concurrent)  — global mission.txt + campaign_info.txt
+ *   2. Rolling state memory — reads chatAnalysis JSON from the CAMPRUN ledger
+ *      record via ByMemberHistory GSI2 (replaces granular CHAT_LOG entities)
+ *   3. Bedrock ConverseCommand — Amazon Nova Lite cross-region inference
+ *   4. record_chat_analysis tool — writes cumulative summary + sentiment back
+ *      to chatAnalysis on the same CAMPRUN ledger record
+ *   5. Chunked WhatsApp delivery — \n\n split with 1500ms inter-chunk delay
  *
- * DynamoDB key patterns:
- *   Chat log sk:    CHAT#<campIdRaw>#<phone>#<timestamp>
- *   Ledger sk:      CAMPRUN#<campIdRaw>#MEM#<phone>#<timestamp>
- *   Member profile: MEM#<phone>
+ * Memory model:
+ *   chatAnalysis (JSON stored on CAMPRUN ledger):
+ *     { summary: string, sentiment: string, lastInteraction: ISO string }
+ *   Replaces granular CHAT_LOG DynamoDB records.
  */
 
 import {
   DynamoDBClient,
   QueryCommand,
-  PutItemCommand,
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import {
@@ -40,22 +33,20 @@ import {
   ConverseCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 
-const ddb      = new DynamoDBClient({});
-const s3       = new S3Client({});
-const bedrock  = new BedrockRuntimeClient({ region: process.env.AWS_REGION ?? "us-east-1" });
+const ddb     = new DynamoDBClient({});
+const s3      = new S3Client({});
+const bedrock = new BedrockRuntimeClient({ region: process.env.AWS_REGION ?? "us-east-1" });
 
 const TABLE_NAME            = process.env.TABLE_NAME!;
 const RAG_BUCKET            = process.env.RAG_BUCKET_NAME!;
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN!;
 const WHATSAPP_PHONE_ID     = process.env.WHATSAPP_PHONE_ID!;
 
-// Amazon Nova Lite via US cross-region inference profile.
-// The 'us.' prefix routes requests to available US data centers automatically,
-// avoiding availability errors when deployed outside primary US regions.
+// Cross-region inference profile — routes to available US data centers
 const BEDROCK_MODEL_ID = "us.amazon.nova-lite-v1:0";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-interface ChatMessage { role: "user" | "assistant"; content: string; }
+// ── Utilities ─────────────────────────────────────────────────────────────────
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -66,170 +57,150 @@ export const handler = async (event: any) => {
     try {
       const payload = JSON.parse(record.body);
       const {
-        associationId,   // ASSOC#<tenantSub>
-        senderPhone,     // e.g. "97333787388"
-        messageText,     // the member's message
-        contextWamid,    // WAMID of the original outbound message (may be undefined)
-        campIdRaw,       // campaign ID without CAMP# prefix (may be undefined)
-        isContrib = false, // true when the member tapped a contribution button
+        associationId,
+        senderPhone,
+        messageText,
+        contextWamid,
+        campIdRaw,
+        isContrib = false,
       } = payload;
 
-      const now = new Date().toISOString();
+      const now    = new Date().toISOString();
+      const gsi2pk = `${associationId}#MEM#${senderPhone}`;
 
-      // ── 1. S3 RAG: fetch association knowledge document ─────────────────
-      // Key format: ASSOC#<tenantSub>/mission.txt
-      // If missing, proceed without it — agent still has DB memory.
-      let ragContext = "";
-      try {
-        const s3Key = `${associationId}/mission.txt`;
-        const s3Res = await s3.send(new GetObjectCommand({
-          Bucket: RAG_BUCKET,
-          Key: s3Key,
-        }));
-        ragContext = await s3Res.Body!.transformToString("utf-8");
-        console.log(`✅ RAG: loaded ${ragContext.length} chars from s3://${RAG_BUCKET}/${s3Key}`);
-      } catch (err: any) {
-        if (err.name === "NoSuchKey" || err.Code === "NoSuchKey") {
-          console.log("ℹ️ RAG: no knowledge document found — proceeding without it");
-        } else {
-          console.warn("⚠️ RAG: S3 error:", err.message);
-        }
+      // ── 1. Concurrent S3 RAG fetch ──────────────────────────────────────
+      // global: ASSOC#<sub>/mission.txt
+      // campaign: ASSOC#<sub>/CAMP#<id>/campaign_info.txt
+      const missionKey  = `${associationId}/mission.txt`;
+      const campaignKey = campIdRaw
+        ? `${associationId}/CAMP#${campIdRaw}/campaign_info.txt`
+        : null;
+
+      const [missionResult, campaignResult] = await Promise.allSettled([
+        s3.send(new GetObjectCommand({ Bucket: RAG_BUCKET, Key: missionKey })),
+        campaignKey
+          ? s3.send(new GetObjectCommand({ Bucket: RAG_BUCKET, Key: campaignKey }))
+          : Promise.reject(new Error("NoSuchKey")),
+      ]);
+
+      let ragContext      = "";
+      let campaignContext = "";
+
+      if (missionResult.status === "fulfilled") {
+        ragContext = await (missionResult.value as any).Body!.transformToString("utf-8");
+        console.log(`✅ RAG global: ${ragContext.length} chars`);
+      } else if ((missionResult.reason?.name ?? missionResult.reason?.message) !== "NoSuchKey") {
+        console.warn("⚠️ RAG global error:", missionResult.reason?.message);
       }
 
-      // ── 2. Long-term memory: member campaign history via GSI2 ───────────
-      const gsi2pk = `${associationId}#MEM#${senderPhone}`;
-      const historyRes = await ddb.send(new QueryCommand({
+      if (campaignResult.status === "fulfilled") {
+        campaignContext = await (campaignResult.value as any).Body!.transformToString("utf-8");
+        console.log(`✅ RAG campaign: ${campaignContext.length} chars`);
+      }
+      // campaign NoSuchKey is expected — silent
+
+      // ── 2. Rolling state memory — read chatAnalysis from CAMPRUN ledger ──
+      // Queries ByMemberHistory (GSI2) with ScanIndexForward: false to get
+      // the most recent ledger record for this member.
+      // The chatAnalysis field holds a compact JSON summary of all past turns,
+      // replacing the granular CHAT_LOG DynamoDB records.
+      const ledgerQuery = await ddb.send(new QueryCommand({
         TableName: TABLE_NAME,
         IndexName: "ByMemberHistory",
         KeyConditionExpression: "gsi2pk = :gsi2pk",
         ExpressionAttributeValues: { ":gsi2pk": { S: gsi2pk } },
         ScanIndexForward: false,
-        Limit: 10,
+        Limit: 1,
       }));
 
-      const campaignHistory = (historyRes.Items ?? []).map(item => ({
-        campaign:      item.gsi2sk?.S ?? "Unknown",
-        delivery:      item.deliveryStatus?.S ?? "—",
-        payment:       item.paymentStatus?.S ?? "—",
-        read:          item.isRead?.BOOL ?? false,
-        replied:       item.hasReplied?.BOOL ?? false,
-      }));
+      let previousSummaryContext = "No previous interaction history recorded.";
+      let targetLedgerKey: { pk: string; sk: string } | null = null;
 
-      const historyText = campaignHistory.length > 0
-        ? campaignHistory.map(h =>
-            `  • ${h.campaign}: delivery=${h.delivery}, payment=${h.payment}, read=${h.read}, replied=${h.replied}`
-          ).join("\n")
-        : "  No campaign history found.";
+      if (ledgerQuery.Items?.length) {
+        const item = ledgerQuery.Items[0];
+        targetLedgerKey = { pk: item.pk.S!, sk: item.sk.S! };
 
-      // ── 3. Short-term memory: recent chat log ────────────────────────────
-      // sk pattern: CHAT#<campIdRaw>#<phone>#<timestamp>
-      // If campIdRaw is unknown, use a broad CHAT# prefix to get any history
-      const chatSkPrefix = campIdRaw
-        ? `CHAT#${campIdRaw}#${senderPhone}#`
-        : `CHAT#`;
+        if (item.chatAnalysis?.S) {
+          try {
+            const parsed = JSON.parse(item.chatAnalysis.S);
+            previousSummaryContext =
+              `Previous Summary: ${parsed.summary} (Overall Sentiment: ${parsed.sentiment})`;
+          } catch {
+            // If chatAnalysis is not valid JSON, use it as raw text
+            previousSummaryContext = item.chatAnalysis.S;
+          }
+        } else if (item.inquirySummary?.S) {
+          // Fallback: use legacy inquirySummary if chatAnalysis not yet written
+          previousSummaryContext = `Previous Note: ${item.inquirySummary.S}`;
+        }
+      }
 
-      const chatLogRes = await ddb.send(new QueryCommand({
-        TableName: TABLE_NAME,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-        ExpressionAttributeValues: {
-          ":pk":     { S: associationId },
-          ":prefix": { S: chatSkPrefix },
-        },
-        ScanIndexForward: false, // most recent first
-        Limit: 10,
-      }));
-
-      // Reverse to get chronological order for the Bedrock messages array
-      const chatHistory: ChatMessage[] = (chatLogRes.Items ?? [])
-        .reverse()
-        .map(item => ({
-          role:    (item.name?.S ?? "user") as "user" | "assistant",
-          content: item.description?.S ?? "",
-        }))
-        .filter(m => m.content);
-
-      // ── 4. Build Bedrock payload ─────────────────────────────────────────
+      // ── 3. System prompt ─────────────────────────────────────────────────
       const systemPrompt = [
         "You are a friendly, human-like assistant for a charitable association chatting on WhatsApp.",
-        "CRITICAL INSTRUCTION: You MUST reply in the EXACT SAME LANGUAGE the user speaks in their latest message. If they speak Spanish, reply in Spanish. If they speak Arabic, reply in Arabic. Never switch languages.",
-        "Keep responses highly conversational, short, and natural. Do not act like a robot.",
-        "Do NOT output <thinking> or any XML/reasoning tags. Output only the final message text.",
-        "If the user shares meaningful information or completes an interaction, use the update_chat_summary tool to save a concise 1-sentence summary of what they communicated.",
-        "If a member says 'I Contribute', indicates they want to donate, or sends any contribution intent,",
-        "reply warmly with a heartfelt thank you, e.g.: 'Thank you for your generosity and support! 🙏 A payment link will be shared with you shortly.'",
-        "For general questions about goals, projects, or background, ground your answers strictly in the Association Knowledge section below. Do not invent details not found there.",
-        "Use the flag_for_admin tool ONLY for complex disputes, sensitive inquiries, or custom admin requests that require a human.",
+        "CRITICAL LANGUAGE RULE: First, identify the language of the user's latest message. You MUST reply 100% in that exact language. If the user writes in Arabic, reply in Arabic. If they write in Spanish, reply in Spanish. NEVER reply in a language different from the user's last message. Translate any facts from Association Knowledge into the user's language.",
+        "TRANSLATION IMPERATIVE: If the Association Knowledge below is in a different language than the user's, internally translate the relevant facts before replying. Never copy-paste text in the wrong language.",
+        "EXTREME CONCISENESS: This is WhatsApp. Limit EVERY reply to 1–2 short sentences maximum.",
+        "NO INFO-DUMPING: Give a 1-sentence answer and end with one natural follow-up question.",
+        "Do NOT output <thinking> or any XML/reasoning tags. Output only the final reply text.",
+        "ALWAYS call the record_chat_analysis tool to update the cumulative summary and sentiment after every reply.",
         isContrib
-          ? "IMPORTANT: The member just tapped the contribution button — respond with a warm thank-you immediately."
-          : "",
+          ? "IMPORTANT: The member just tapped 'I Contribute' — reply with a warm thank-you immediately. E.g.: 'Thank you for your generosity! 🙏 A payment link will be shared with you shortly.'"
+          : "If the member indicates a contribution intent, reply warmly and mention the payment link.",
+        "For questions about goals, campaigns, or the association, ground answers strictly in the Association Knowledge below.",
+        "Use the flag_for_admin tool ONLY for complex disputes, sensitive complaints, or requests requiring human intervention.",
         "",
-        ragContext ? `## Association Knowledge\n${ragContext}` : "",
+        ragContext      ? `## Global Association Context\n${ragContext}`   : "",
+        campaignContext ? `## Specific Campaign Context\n${campaignContext}` : "",
         "",
-        "## Member Campaign History",
-        historyText,
+        `## Conversation Context So Far\n${previousSummaryContext}`,
       ].filter(Boolean).join("\n");
 
-      // Append current message to history for the messages array
-      const messages: ChatMessage[] = [
-        ...chatHistory,
-        { role: "user", content: messageText },
-      ];
-
-      // ── 5. Invoke Bedrock via ConverseCommand ────────────────────────────
-      // ConverseCommand uses a different schema from InvokeModel:
-      //   - system  → array of { text } objects
-      //   - messages → content is array of { text } objects (not bare strings)
-      //   - inferenceConfig.maxTokens (camelCase, not root-level max_tokens)
-      //   - toolConfig uses toolSpec.inputSchema.json (not input_schema)
-      //   - response lives at output.message.content[].text / .toolUse
-
-      // Format messages for the Converse API
-      const formattedMessages = messages.map(m => ({
-        role:    m.role,
-        content: [{ text: m.content }],
-      }));
-
+      // ── 4. Invoke Bedrock ────────────────────────────────────────────────
       const converseRes = await bedrock.send(new ConverseCommand({
-        modelId: BEDROCK_MODEL_ID,
-        system:  [{ text: systemPrompt }],
-        messages: formattedMessages,
-        inferenceConfig: {
-          maxTokens: 512,
-        },
+        modelId:  BEDROCK_MODEL_ID,
+        system:   [{ text: systemPrompt }],
+        messages: [{ role: "user", content: [{ text: messageText }] }],
+        inferenceConfig: { maxTokens: 256 }, // 1-2 sentences needs far less than 512
         toolConfig: {
           tools: [
+            // ── Primary tool: rolling sentiment + summary ──────────────────
+            // Always called — maintains the chatAnalysis JSON state on the ledger.
             {
               toolSpec: {
-                name: "flag_for_admin",
-                description: "Escalate this member's inquiry to a human admin. Use when the member has a complex issue that AI cannot resolve (e.g., payment dispute, complaint, special request).",
+                name: "record_chat_analysis",
+                description: "Record the cumulative summary and the member's overall emotional sentiment trajectory. ALWAYS call this after every response.",
                 inputSchema: {
                   json: {
                     type: "object",
                     properties: {
                       summary: {
                         type: "string",
-                        description: "A concise 1-2 sentence summary of the member's issue for the admin.",
+                        description: "A 1-2 sentence cumulative summary capturing intent and questions across the dialogue.",
+                      },
+                      sentiment: {
+                        type: "string",
+                        enum: ["POSITIVE", "NEUTRAL", "NEGATIVE", "FRUSTRATED"],
+                        description: "The member's overall emotional sentiment trajectory.",
                       },
                     },
-                    required: ["summary"],
+                    required: ["summary", "sentiment"],
                   },
                 },
               },
             },
-            // ── update_chat_summary tool ─────────────────────────────────────
-            // Called by the model when the member shares meaningful information.
-            // Writes a concise 1-sentence summary to the member's ledger record.
+            // ── Escalation tool: complex issues requiring human follow-up ──
             {
               toolSpec: {
-                name: "update_chat_summary",
-                description: "Save a 1-sentence summary of the current conversation to the member's campaign record. Use when the member shares meaningful information or completes an interaction.",
+                name: "flag_for_admin",
+                description: "Escalate to a human admin. Use ONLY for complex disputes, sensitive complaints, or requests that AI cannot resolve.",
                 inputSchema: {
                   json: {
                     type: "object",
                     properties: {
                       summary: {
                         type: "string",
-                        description: "A very brief summary of what the member asked or stated.",
+                        description: "1-2 sentence summary of the issue for the admin.",
                       },
                     },
                     required: ["summary"],
@@ -241,54 +212,53 @@ export const handler = async (event: any) => {
         },
       }));
 
-      // ── 6. Parse response and handle tool calls ───────────────────────────
+      // ── 5. Parse response + execute tool calls ───────────────────────────
       const responseContent = converseRes.output?.message?.content ?? [];
       let aiReplyText = "";
       let escalated   = false;
 
       for (const block of responseContent) {
-        // Text block — the model's conversational reply
         if (block.text) {
           aiReplyText = block.text;
         }
 
-        // Tool use block — model decided to escalate to admin
-        if (block.toolUse && block.toolUse.name === "flag_for_admin") {
-          const summary = (block.toolUse.input as any)?.summary ?? "Member requires follow-up.";
-          escalated   = true;
-          aiReplyText = aiReplyText || "Thank you for your message. A member of our team will follow up with you shortly.";
+        // ── record_chat_analysis ──────────────────────────────────────────
+        if (block.toolUse?.name === "record_chat_analysis" && targetLedgerKey) {
+          const { summary = "", sentiment = "NEUTRAL" } =
+            (block.toolUse.input as any) ?? {};
 
-          // Find the member's most recent ledger record to attach the flag
-          const ledgerRes = await ddb.send(new QueryCommand({
+          const analysisPayload = JSON.stringify({
+            summary,
+            sentiment,
+            lastInteraction: now,
+          });
+
+          await ddb.send(new UpdateItemCommand({
             TableName: TABLE_NAME,
-            IndexName: "ByMemberHistory",
-            KeyConditionExpression: "gsi2pk = :gsi2pk",
-            ExpressionAttributeValues: { ":gsi2pk": { S: gsi2pk } },
-            ScanIndexForward: false,
-            Limit: 1,
+            Key: {
+              pk: { S: targetLedgerKey.pk },
+              sk: { S: targetLedgerKey.sk },
+            },
+            UpdateExpression:
+              "SET chatAnalysis = :analysis, inquirySummary = :summary, updatedAt = :now",
+            ExpressionAttributeValues: {
+              ":analysis": { S: analysisPayload },
+              ":summary":  { S: summary },
+              ":now":      { S: now },
+            },
           }));
-
-          if (ledgerRes.Items?.length) {
-            const { pk, sk } = ledgerRes.Items[0];
-            await ddb.send(new UpdateItemCommand({
-              TableName: TABLE_NAME,
-              Key: { pk: { S: pk.S! }, sk: { S: sk.S! } },
-              UpdateExpression: "SET requiresAdminAction = :flag, inquirySummary = :summary, updatedAt = :now",
-              ExpressionAttributeValues: {
-                ":flag":    { BOOL: true },
-                ":summary": { S: summary },
-                ":now":     { S: now },
-              },
-            }));
-            console.log(`🚨 Admin flag set on ${sk.S}: "${summary}"`);
-          }
+          console.log(`📊 chatAnalysis updated (${sentiment}): "${summary.substring(0, 60)}…"`);
         }
 
-        // ── update_chat_summary tool execution ─────────────────────────────
-        if (block.toolUse && block.toolUse.name === "update_chat_summary") {
-          const summaryText = (block.toolUse.input as any)?.summary ?? "";
-          if (summaryText) {
-            const ledgerRes = await ddb.send(new QueryCommand({
+        // ── flag_for_admin ────────────────────────────────────────────────
+        if (block.toolUse?.name === "flag_for_admin") {
+          const summary  = (block.toolUse.input as any)?.summary ?? "Member requires follow-up.";
+          escalated      = true;
+          aiReplyText    = aiReplyText || "Thank you for your message. A member of our team will follow up with you shortly.";
+
+          // If no targetLedgerKey yet, look up the ledger now
+          const ledgerTarget = targetLedgerKey ?? await (async () => {
+            const res = await ddb.send(new QueryCommand({
               TableName: TABLE_NAME,
               IndexName: "ByMemberHistory",
               KeyConditionExpression: "gsi2pk = :gsi2pk",
@@ -296,126 +266,56 @@ export const handler = async (event: any) => {
               ScanIndexForward: false,
               Limit: 1,
             }));
+            if (!res.Items?.length) return null;
+            return { pk: res.Items[0].pk.S!, sk: res.Items[0].sk.S! };
+          })();
 
-            if (ledgerRes.Items?.length) {
-              const { pk, sk } = ledgerRes.Items[0];
-              await ddb.send(new UpdateItemCommand({
-                TableName: TABLE_NAME,
-                Key: { pk: { S: pk.S! }, sk: { S: sk.S! } },
-                UpdateExpression: "SET inquirySummary = :summary, updatedAt = :now",
-                ExpressionAttributeValues: {
-                  ":summary": { S: summaryText },
-                  ":now":     { S: now },
-                },
-              }));
-              console.log(`📝 Chat summary saved on ${sk.S}: "${summaryText}"`);
-            }
+          if (ledgerTarget) {
+            await ddb.send(new UpdateItemCommand({
+              TableName: TABLE_NAME,
+              Key: { pk: { S: ledgerTarget.pk }, sk: { S: ledgerTarget.sk } },
+              UpdateExpression:
+                "SET requiresAdminAction = :flag, inquirySummary = :summary, updatedAt = :now",
+              ExpressionAttributeValues: {
+                ":flag":    { BOOL: true },
+                ":summary": { S: summary },
+                ":now":     { S: now },
+              },
+            }));
+            console.log(`🚨 Admin flag set on ${ledgerTarget.sk}: "${summary}"`);
           }
         }
       }
 
-      // ── Sanitise: strip any <thinking>...</thinking> tags Nova Lite may emit.
-      // The system prompt instructs the model not to output them, but we apply
-      // this defence-in-depth regex to guarantee clean output before sending.
-      aiReplyText = aiReplyText.replace(/<thinking>[\s\S]*?<\/thinking>/g, "").trim();
+      // ── 6. Sanitise output ───────────────────────────────────────────────
+      // Strip any <thinking>…</thinking> blocks Nova Lite may still emit,
+      // then normalise whitespace.
+      aiReplyText = aiReplyText
+        .replace(/<thinking>[\s\S]*?<\/thinking>/g, "")
+        .trim();
 
       if (!aiReplyText) {
-        aiReplyText = "Thank you for your message. We will get back to you soon.";
+        aiReplyText = "Thank you for your message. We will get back to you shortly.";
       }
 
-      // ── 7. Persist chat log ──────────────────────────────────────────────
-      // User message
-      const chatSkBase = `CHAT#${campIdRaw ?? "GENERAL"}#${senderPhone}`;
-      await ddb.send(new PutItemCommand({
-        TableName: TABLE_NAME,
-        Item: {
-          pk:         { S: associationId },
-          sk:         { S: `${chatSkBase}#${Date.now()}U` },
-          entityType: { S: "CHAT_LOG" },
-          __typename: { S: "PushNotSystem" },
-          name:       { S: "user" },         // role
-          description:{ S: messageText },    // message text
-          phone:      { S: senderPhone },
-          createdAt:  { S: now },
-          updatedAt:  { S: now },
-        },
-      }));
+      // ── 7. Chunked WhatsApp delivery ─────────────────────────────────────
+      // Split on double newlines (\n\n) — the natural paragraph boundary Nova
+      // Lite uses. Each chunk is sent sequentially with a 1500ms delay so the
+      // conversation feels like a human typing multiple messages.
+      // context.message_id (thread anchor) is set only on the first chunk.
+      const messageChunks = aiReplyText
+        .split(/\n\n+/)
+        .map((c: string) => c.trim())
+        .filter(Boolean);
 
-      // AI response
-      await ddb.send(new PutItemCommand({
-        TableName: TABLE_NAME,
-        Item: {
-          pk:         { S: associationId },
-          sk:         { S: `${chatSkBase}#${Date.now()}A` },
-          entityType: { S: "CHAT_LOG" },
-          __typename: { S: "PushNotSystem" },
-          name:       { S: "assistant" },    // role
-          description:{ S: aiReplyText },    // AI response text
-          phone:      { S: senderPhone },
-          createdAt:  { S: now },
-          updatedAt:  { S: now },
-        },
-      }));
-
-      // ── 8. Chunk and send WhatsApp reply ────────────────────────────────
-      // Splits the AI response into natural conversational chunks and sends
-      // them sequentially with human-like typing delays.
-      //
-      // Algorithm:
-      //   1. Split on sentence boundaries (.!?) or paragraph breaks.
-      //   2. Merge consecutive short sentences into one chunk (≤ MAX_CHUNK_CHARS).
-      //   3. Hard-break oversized sentences at word boundaries.
-      //   4. Delay between chunks = BASE_DELAY + prevChunkLength * TYPING_MS_PER_CHAR.
-      //   5. context.message_id (thread anchor) only on the FIRST chunk so
-      //      follow-on messages appear as natural continuations, not quoted replies.
-      const MAX_CHUNK_CHARS    = 120;
-      const BASE_DELAY_MS      = 600;
-      const TYPING_MS_PER_CHAR = 28; // ~35 chars/sec — natural WhatsApp pace
-
-      function splitIntoChunks(text: string): string[] {
-        const sentences = text
-          .split(/(?<=[.!?]) +|\n\n+/)
-          .map((s: string) => s.trim())
-          .filter(Boolean);
-
-        const chunks: string[] = [];
-        for (const sentence of sentences) {
-          if (sentence.length <= MAX_CHUNK_CHARS) {
-            const last = chunks[chunks.length - 1];
-            if (last && (last.length + 1 + sentence.length) <= MAX_CHUNK_CHARS) {
-              chunks[chunks.length - 1] = last + " " + sentence;
-            } else {
-              chunks.push(sentence);
-            }
-          } else {
-            let remaining = sentence;
-            while (remaining.length > MAX_CHUNK_CHARS) {
-              const cutAt = remaining.lastIndexOf(" ", MAX_CHUNK_CHARS);
-              const breakAt = cutAt > 0 ? cutAt : MAX_CHUNK_CHARS;
-              chunks.push(remaining.slice(0, breakAt).trim());
-              remaining = remaining.slice(breakAt).trim();
-            }
-            if (remaining) chunks.push(remaining);
-          }
-        }
-        return chunks.length > 0 ? chunks : [text];
-      }
-
-      const chunks = splitIntoChunks(aiReplyText);
-      const delay  = (ms: number) => new Promise<void>(res => setTimeout(res, ms));
-
-      for (let i = 0; i < chunks.length; i++) {
-        if (i > 0) {
-          await delay(BASE_DELAY_MS + chunks[i - 1].length * TYPING_MS_PER_CHAR);
-        }
-
+      for (let i = 0; i < messageChunks.length; i++) {
         const chunkPayload = {
           messaging_product: "whatsapp",
           recipient_type:    "individual",
           to:                senderPhone,
           type:              "text",
-          text:              { body: chunks[i] },
-          ...(i === 0 && contextWamid ? { context: { message_id: contextWamid } } : {}),
+          text:              { body: messageChunks[i] },
+          ...(contextWamid && i === 0 ? { context: { message_id: contextWamid } } : {}),
         };
 
         const chunkRes = await fetch(
@@ -423,7 +323,7 @@ export const handler = async (event: any) => {
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+              Authorization:  `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify(chunkPayload),
@@ -432,13 +332,15 @@ export const handler = async (event: any) => {
 
         if (!chunkRes.ok) {
           const err = await chunkRes.json();
-          console.error(`❌ WhatsApp chunk ${i + 1}/${chunks.length} failed:`, err);
-          break; // abort remaining chunks to avoid partial delivery
+          console.error(`❌ WhatsApp chunk ${i + 1}/${messageChunks.length} failed:`, err);
+          break;
         }
-        console.log(`✅ Chunk ${i + 1}/${chunks.length} sent to ${senderPhone}`);
+        console.log(`✅ Chunk ${i + 1}/${messageChunks.length} → ${senderPhone}`);
+
+        if (i < messageChunks.length - 1) await sleep(1500);
       }
 
-      if (escalated) console.log(`🚨 Conversation escalated to admin for ${senderPhone}`);
+      if (escalated) console.log(`🚨 Escalated to admin for ${senderPhone}`);
 
     } catch (err: any) {
       console.error(`❌ chatAgent failed for record ${record.messageId}:`, err.message);
