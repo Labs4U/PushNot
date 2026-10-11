@@ -237,8 +237,8 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
   }, [campaignSearch, campaigns]);
 
   // ── الجنس toggle ─────────────────────────────────────────────────────────
-  const handleToggleالجنس = (g: string) =>
-    setTargetالجنسs(prev => prev.includes(g) ? prev.filter(x => x !== g) : [...prev, g]);
+  const handleToggleGender = (g: string) =>
+    setTargetGenders(prev => prev.includes(g) ? prev.filter(x => x !== g) : [...prev, g]);
 
   // ── Audience size (reactive, useMemo) ─────────────────────────────────────
   const estimatedAudienceSize = useMemo(() => {
@@ -253,10 +253,10 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
       if (targetRegion !== 'All Regions' && region !== targetRegion.trim()) return false;
       if (engagement < minEngagementRate) return false;
       if (conversion < minConversionRate) return false;
-      if (targetالجنسs.length > 0 && !targetالجنسs.includes(gender)) return false;
+      if (targetGenders.length > 0 && !targetGenders.includes(gender)) return false;
       return true;
     }).length;
-  }, [allMembers, minEngagementRate, minConversionRate, targetRegion, targetالجنسs]);
+  }, [allMembers, minEngagementRate, minConversionRate, targetRegion, targetGenders]);
 
   // ── Campaign selection handlers ───────────────────────────────────────────
   const handleSelectCampaign = (camp: any) => {
@@ -315,7 +315,7 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
         minEngagementRate,
         minConversionRate,
         targetRegion: targetRegion !== 'All Regions' ? targetRegion : undefined,
-        targetالجنسs: targetالجنسs.length > 0 ? targetالجنسs : undefined,
+        targetGenders: targetGenders.length > 0 ? targetGenders : undefined,
       }, { authMode: 'userPool' });
 
       if (response.errors?.length) throw new Error(response.errors[0].message);
