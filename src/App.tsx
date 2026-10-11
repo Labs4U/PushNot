@@ -30,15 +30,21 @@ function isConditionalCheckFailure(message: string): boolean {
 
 export default function App() {
   return (
-    <Authenticator>
-      {({ signOut, user }) => (
-        <AppShell
-          userId={user?.userId ?? ''}
-          userEmail={user?.signInDetails?.loginId ?? ''}
-          signOut={signOut}
-        />
-      )}
-    </Authenticator>
+    // Wrap Authenticator in LTR so Amplify's own UI renders correctly.
+    // The inner AppShell carries dir="rtl" for the Arabic dashboard.
+    <div dir="ltr">
+      <Authenticator>
+        {({ signOut, user }) => (
+          <div dir="rtl">
+            <AppShell
+              userId={user?.userId ?? ''}
+              userEmail={user?.signInDetails?.loginId ?? ''}
+              signOut={signOut}
+            />
+          </div>
+        )}
+      </Authenticator>
+    </div>
   );
 }
 
@@ -151,7 +157,7 @@ function AppShell({ userId, userEmail, signOut }: AppShellProps) {
 
   // profileStatus === 'ready' — full dashboard
   return (
-    <div className="app" dir="rtl">
+    <div className="app">
       {/* ── Header ── */}
       <div className="app-header">
         <div className="app-title">📢 لوحة إشعارات واتساب</div>

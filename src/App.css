@@ -993,3 +993,11 @@ code, .ltr-value {
   line-height: 1.5;
   max-width: 320px;
 }
+[data-amplify-authenticator] {
+  direction: ltr !important;
+  text-align: left !important;
+}
+[data-amplify-authenticator] input,
+[data-amplify-authenticator] button {
+  text-align: left !important;
+}
