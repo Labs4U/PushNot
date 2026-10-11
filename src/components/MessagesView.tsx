@@ -72,11 +72,11 @@ async function paginatedList(filter: Record<string, any>, label = ''): Promise<a
         // createdAt field. AppSync resolves it as null, violating the non-nullable
         // constraint and dropping the item. The fix is in processOutboundQueue —
         // adding createdAt = if_not_exists(createdAt, :now) to the UpdateExpression.
-        // Until existing records are rewritten, warn but continue processing data.
+        // Until existing سجلات are rewritten, warn but continue processing data.
         console.warn(
           `⚠️ [${label}] ${res.errors.length} record(s) missing createdAt (Lambda-written via UpdateItem). ` +
           `data returned: ${(res.data ?? []).length} items. ` +
-          'Deploy updated processOutboundQueue to fix future records.'
+          'Deploy updated processOutboundQueue to fix future سجلات.'
         );
       } else {
         console.error(`❌ [${label}] AppSync errors:`, res.errors);
@@ -117,7 +117,7 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
   const [targetRegion,      setTargetRegion]      = useState('All Regions');
   const [targetGenders,     setTargetGenders]     = useState<string[]>(['MALE', 'FEMALE']);
 
-  // ── Campaign ledger (CAMPRUN# records — post-broadcast delivery roster) ───
+  // ── Campaign ledger (CAMPRUN# سجلات — post-broadcast delivery roster) ───
   // Option A base table pattern:
   //   pk  = associationId
   //   sk  beginsWith  CAMPRUN#<campIdRaw>#
@@ -188,7 +188,7 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
         pk: { eq: associationId },
         sk: { beginsWith: skPrefix },
       }, 'ledger');
-      console.log(`✅ Ledger records: ${items.length}`);
+      console.log(`✅ Ledger سجلات: ${items.length}`);
       setLedgerRecords(items);
     } catch (err: any) {
       console.error('❌ Ledger fetch failed:', err.message ?? err);
@@ -236,9 +236,9 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
     }
   }, [campaignSearch, campaigns]);
 
-  // ── Gender toggle ─────────────────────────────────────────────────────────
-  const handleToggleGender = (g: string) =>
-    setTargetGenders(prev => prev.includes(g) ? prev.filter(x => x !== g) : [...prev, g]);
+  // ── الجنس toggle ─────────────────────────────────────────────────────────
+  const handleToggleالجنس = (g: string) =>
+    setTargetالجنسs(prev => prev.includes(g) ? prev.filter(x => x !== g) : [...prev, g]);
 
   // ── Audience size (reactive, useMemo) ─────────────────────────────────────
   const estimatedAudienceSize = useMemo(() => {
@@ -253,10 +253,10 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
       if (targetRegion !== 'All Regions' && region !== targetRegion.trim()) return false;
       if (engagement < minEngagementRate) return false;
       if (conversion < minConversionRate) return false;
-      if (targetGenders.length > 0 && !targetGenders.includes(gender)) return false;
+      if (targetالجنسs.length > 0 && !targetالجنسs.includes(gender)) return false;
       return true;
     }).length;
-  }, [allMembers, minEngagementRate, minConversionRate, targetRegion, targetGenders]);
+  }, [allMembers, minEngagementRate, minConversionRate, targetRegion, targetالجنسs]);
 
   // ── Campaign selection handlers ───────────────────────────────────────────
   const handleSelectCampaign = (camp: any) => {
@@ -283,7 +283,7 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
   const handleSubmit = async () => {
     const isNew = !selectedCampaign && campaignSearch.trim();
     if (!isNew && !selectedCampaign) {
-      setFeedback({ type: 'error', text: 'Select an existing campaign or type a new name.' });
+      setFeedback({ type: 'error', text: 'اختر حملة موجودة أو اكتب اسمًا جديدًا.' });
       return;
     }
     setIsSubmitting(true);
@@ -315,7 +315,7 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
         minEngagementRate,
         minConversionRate,
         targetRegion: targetRegion !== 'All Regions' ? targetRegion : undefined,
-        targetGenders: targetGenders.length > 0 ? targetGenders : undefined,
+        targetالجنسs: targetالجنسs.length > 0 ? targetالجنسs : undefined,
       }, { authMode: 'userPool' });
 
       if (response.errors?.length) throw new Error(response.errors[0].message);
@@ -367,15 +367,15 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
         <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
           <div className="panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
             <h3 style={{ margin: '0 0 16px', fontSize: '16px', fontWeight: 600, color: '#f1f5f9', flexShrink: 0 }}>
-              📋 Campaign Selection
+              📋 اختيار الحملة
             </h3>
 
             {/* Campaign search / autocomplete */}
             <div className="campaign-search-wrapper" style={{ flexShrink: 0, marginBottom: '16px' }}>
-              <label>Campaign Identifier / Title</label>
+              <label>معرّف الحملة / العنوان</label>
               <div className="campaign-search-input-container" style={{ position: 'relative', overflow: 'visible' }}>
                 <input type="text"
-                  placeholder="Search existing or type new campaign name..."
+                  placeholder="ابحث أو اكتب اسم حملة جديدة..."
                   value={campaignSearch}
                   onChange={e => { setCampaignSearch(e.target.value); setIsDropdownOpen(true); }}
                   onFocus={() => setIsDropdownOpen(true)}
@@ -391,7 +391,7 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
                 {isDropdownOpen && (
                   <div className="campaign-suggestions-dropdown">
                     {filteredCampaigns.length === 0
-                      ? <div className="campaign-suggestion-item" style={{ color: '#94a3b8' }}>No existing campaigns found.</div>
+                      ? <div className="campaign-suggestion-item" style={{ color: '#94a3b8' }}>لم يتم العثور على حملات.</div>
                       : filteredCampaigns.map(camp => (
                         <div key={camp?.sk || Math.random()} className="campaign-suggestion-item"
                           onClick={() => handleSelectCampaign(camp)}>
@@ -409,15 +409,15 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
             {/* Selected campaign badge */}
             {selectedCampaign && (
               <div className="campaign-selected-badge existing" style={{ marginBottom: '16px', flexShrink: 0 }}>
-                <strong>Relaunch:</strong> {selectedCampaign.title || selectedCampaign.sk}
+                <strong>إعادة إطلاق:</strong> {selectedCampaign.title || selectedCampaign.sk}
               </div>
             )}
 
             {/* Target amount for new campaigns */}
             {!selectedCampaign && campaignSearch && (
               <div style={{ marginBottom: '16px', flexShrink: 0 }}>
-                <label>Target Contribution Goal ($)</label>
-                <input type="number" placeholder="e.g. 5000"
+                <label>هدف المساهمة ($)</label>
+                <input type="number" placeholder="مثال: 5000"
                   value={targetAmount}
                   onChange={e => setTargetAmount(e.target.value ? Number(e.target.value) : '')}
                   min="0" step="100" />
@@ -428,11 +428,11 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
             {selectedCampaign && (
               <div style={{ marginBottom: '16px', paddingBottom: '16px', borderBottom: '1px solid #334155', flexShrink: 0 }}>
                 <div style={{ marginBottom: '12px' }}>
-                  <div style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 600, marginBottom: '4px' }}>Target Goal</div>
+                  <div style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 600, marginBottom: '4px' }}>الهدف المستهدف</div>
                   <div style={{ fontSize: '18px', fontWeight: 600, color: '#3b82f6' }}>${selectedCampaign.targetAmount || 0}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 600, marginBottom: '4px' }}>Status</div>
+                  <div style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 600, marginBottom: '4px' }}>الحالة</div>
                   <span style={{
                     display: 'inline-block', padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 600,
                     backgroundColor: selectedCampaign.status === 'RUNNING' ? 'rgba(16,185,129,0.1)' : 'rgba(100,116,139,0.1)',
@@ -445,21 +445,21 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
             {/* Audience targeting section header */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', flexShrink: 0 }}>
               <h4 style={{ margin: 0, fontSize: '13px', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                🎯 Audience Targeting & Filters
+                🎯 استهداف الجمهور والفلاتر
               </h4>
-              <InfoIcon tooltip="Filter members by engagement, conversion rate, region and gender. Only matching members receive the broadcast." />
+              <InfoIcon tooltip="تصفية الأعضاء حسب التفاعل ومعدل التحويل والمنطقة والجنس. يتلقى البثَّ الأعضاءُ المطابقون فقط." />
             </div>
 
             {loadingMembers && (
               <div style={{ marginBottom: '12px', flexShrink: 0, fontSize: '12px', color: '#94a3b8' }}>
-                ⏳ Loading members…
+                ⏳ جارٍ تحميل الأعضاء…
               </div>
             )}
 
             {/* Min engagement rate */}
             <div style={{ marginBottom: '12px', flexShrink: 0 }}>
               <label style={{ fontSize: '12px', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Min. Engagement Rate
+                الحد الأدنى لمعدل التفاعل
               </label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <input type="number" min="0" max="100" value={minEngagementRate}
@@ -472,7 +472,7 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
             {/* Min conversion rate */}
             <div style={{ marginBottom: '12px', flexShrink: 0 }}>
               <label style={{ fontSize: '12px', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Min. Conversion Rate
+                الحد الأدنى لمعدل التحويل
               </label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <input type="number" min="0" max="100" value={minConversionRate}
@@ -485,11 +485,11 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
             {/* Region */}
             <div style={{ marginBottom: '12px', flexShrink: 0 }}>
               <label style={{ fontSize: '12px', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Region / Cluster
+                المنطقة / المجموعة
               </label>
               <select value={targetRegion} onChange={e => setTargetRegion(e.target.value)}
                 style={{ width: '100%', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '6px', color: '#e2e8f0', padding: '8px 12px', fontSize: '13px', cursor: 'pointer' }}>
-                <option value="All Regions">All Regions</option>
+                <option value="كل المناطق">All Regions</option>
                 <option value="A'ali">A'ali</option>
                 <option value="Manama">Manama</option>
                 <option value="Muharraq">Muharraq</option>
@@ -501,16 +501,16 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
               </select>
             </div>
 
-            {/* Gender */}
+            {/* الجنس */}
             <div style={{ marginBottom: '12px', flexShrink: 0 }}>
               <label style={{ fontSize: '12px', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' }}>
-                Gender
+                الجنس
               </label>
               <div style={{ display: 'flex', gap: '16px' }}>
                 {['MALE', 'FEMALE'].map(g => (
                   <label key={g} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', margin: 0, color: '#e2e8f0', fontSize: '13px', fontWeight: 400 }}>
                     <input type="checkbox" checked={targetGenders.includes(g)} onChange={() => handleToggleGender(g)} style={{ cursor: 'pointer' }} />
-                    {g.charAt(0) + g.slice(1).toLowerCase()}
+                    {g === 'MALE' ? 'ذكر' : 'أنثى'}
                   </label>
                 ))}
               </div>
@@ -540,7 +540,7 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
                       opacity: disabled ? 0.4 : 1,
                       transition: 'all 0.15s',
                     }}>
-                    {tab === 'compose' ? '✍️ Compose' : `📋 Target Roster ${ledgerRecords.length > 0 ? `(${ledgerRecords.length})` : ''}`}
+                    {tab === 'compose' ? '✍️ كتابة' : `📋 قائمة المستهدفين ${ledgerRecords.length > 0 ? `(${ledgerRecords.length})` : ''}`}
                   </button>
                 );
               })}
@@ -550,11 +550,11 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
             {activeTab === 'compose' && (
               <>
                 <h3 style={{ margin: '0 0 16px', fontSize: '16px', fontWeight: 600, color: '#f1f5f9', flexShrink: 0 }}>
-                  ✍️ Message Content
+                  ✍️ محتوى الرسالة
                 </h3>
-                <label style={{ marginBottom: '8px', flexShrink: 0 }}>Campaign Message / Outreach Content</label>
+                <label style={{ marginBottom: '8px', flexShrink: 0 }}>رسالة الحملة / محتوى التواصل</label>
                 <textarea
-                  placeholder="Enter message details or noble cause appeal..."
+                  placeholder="أدخل تفاصيل الرسالة أو نداء القضية..."
                   value={messageContent}
                   onChange={e => setMessageContent(e.target.value)}
                   style={{ flex: 1, minHeight: '120px', resize: 'none', marginBottom: '16px', padding: '12px' }}
@@ -562,7 +562,7 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
 
                 {/* Debug counter */}
                 <div style={{ fontSize: '11px', color: '#475569', marginBottom: '6px' }}>
-                  {loadingMembers ? '⏳ Loading…' : `DB: ${allMembers.length} members loaded`}
+                  {loadingMembers ? '⏳ جارٍ التحميل…' : `قاعدة البيانات: ${allMembers.length} عضو محمّل`}
                 </div>
 
                 {/* Member history panel (GSI2) */}
@@ -589,8 +589,8 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
                   <span>📊</span>
                   <span>
                     {loadingMembers
-                      ? 'Loading member data…'
-                      : `Estimated Target Audience: ${estimatedAudienceSize.toLocaleString()} Members`}
+                      ? 'جارٍ تحميل بيانات الأعضاء…'
+                      : `الجمهور المستهدف المقدّر: ${estimatedAudienceSize.toLocaleString()} عضوًا`}
                   </span>
                 </div>
 
@@ -598,7 +598,7 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
                   disabled={isSubmitting || (!selectedCampaign && !campaignSearch.trim()) || loadingMembers}
                   className="btn-submit"
                   style={{ flexShrink: 0, padding: '12px 16px', fontSize: '15px' }}>
-                  {isSubmitting ? '⏳ Dispatching…' : '🚀 Submit & Broadcast to WhatsApp'}
+                  {isSubmitting ? '⏳ جارٍ الإرسال…' : '🚀 إرسال وبث على واتساب'}
                 </button>
               </>
             )}
@@ -616,7 +616,7 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
                   </div>
                   <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <span style={{ fontSize: '12px', color: '#64748b' }}>
-                      {loadingLedger ? '⏳ Loading…' : `${ledgerRecords.length} records`}
+                      {loadingLedger ? '⏳ جارٍ التحميل…' : `${ledgerRecords.length} سجلات`}
                     </span>
                     <button onClick={() => fetchLedger(selectedCampaign)}
                       disabled={loadingLedger}
@@ -631,18 +631,18 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
                 {/* Roster table */}
                 {loadingLedger ? (
                   <div style={{ textAlign: 'center', padding: '32px', color: '#64748b', flexShrink: 0 }}>
-                    ⏳ Loading delivery records…
+                    ⏳ Loading delivery سجلات…
                   </div>
                 ) : ledgerRecords.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '32px', color: '#64748b', fontSize: '13px', flexShrink: 0 }}>
-                    No delivery records yet. Broadcast this campaign to populate the roster.
+                    لا توجد سجلات تسليم بعد. أرسل هذه الحملة لملء القائمة.
                   </div>
                 ) : (
                   <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                       <thead style={{ position: 'sticky', top: 0, backgroundColor: '#0f172a', zIndex: 5 }}>
                         <tr>
-                          {['Phone', 'Delivery', 'Payment', 'Read', 'Replied', 'History'].map(h => (
+                          {['الهاتف', 'التسليم', 'الدفع', 'مقروء', 'رد', 'السجل'].map(h => (
                             <th key={h} style={{ padding: '9px 10px', textAlign: 'left',
                               color: '#64748b', fontWeight: 600, fontSize: '11px',
                               textTransform: 'uppercase', letterSpacing: '0.4px',
@@ -664,12 +664,12 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
                                 {phone}
                               </td>
                               <td style={{ padding: '9px 10px' }}>
-                                <span style={{ color: deliveryColor(rec.deliveryStatus ?? ''), fontWeight: 600, fontSize: '12px' }}>
-                                  {rec.deliveryStatus ?? 'QUEUED'}
+                                <span style={{ color: deliveryColor(rec.deliveryالحالة ?? ''), fontWeight: 600, fontSize: '12px' }}>
+                                  {rec.deliveryالحالة ?? 'QUEUED'}
                                 </span>
                               </td>
                               <td style={{ padding: '9px 10px', color: '#94a3b8', fontSize: '12px' }}>
-                                {rec.paymentStatus ?? '—'}
+                                {rec.paymentالحالة ?? '—'}
                               </td>
                               <td style={{ padding: '9px 10px', textAlign: 'center' }}>
                                 {rec.isRead ? '✅' : <span style={{ color: '#334155' }}>—</span>}
@@ -685,7 +685,7 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
                                   style={{ fontSize: '11px', padding: '2px 8px', background: 'none',
                                     border: '1px solid #1e40af', borderRadius: '3px',
                                     color: '#3b82f6', cursor: 'pointer' }}>
-                                  View
+                                  عرض
                                 </button>
                               </td>
                             </tr>
@@ -700,11 +700,11 @@ const MessagesView: React.FC<MessagesViewProps> = ({ associationId }) => {
                 {ledgerRecords.length > 0 && (
                   <div style={{ flexShrink: 0, paddingTop: '10px', display: 'flex', gap: '20px',
                     fontSize: '12px', color: '#64748b', borderTop: '1px solid #1e293b', marginTop: '4px' }}>
-                    <span>Total: <strong style={{ color: '#94a3b8' }}>{ledgerRecords.length}</strong></span>
-                    <span>Read: <strong style={{ color: '#10b981' }}>{ledgerRecords.filter(r => r.isRead).length}</strong></span>
-                    <span>Replied: <strong style={{ color: '#60a5fa' }}>{ledgerRecords.filter(r => r.hasReplied).length}</strong></span>
-                    <span>Paid: <strong style={{ color: '#a78bfa' }}>
-                      {ledgerRecords.filter(r => r.paymentStatus === 'PAID').length}
+                    <span>الإجمالي: <strong style={{ color: '#94a3b8' }}>{ledgerRecords.length}</strong></span>
+                    <span>مقروء: <strong style={{ color: '#10b981' }}>{ledgerRecords.filter(r => r.isRead).length}</strong></span>
+                    <span>رد: <strong style={{ color: '#60a5fa' }}>{ledgerRecords.filter(r => r.hasReplied).length}</strong></span>
+                    <span>مدفوع: <strong style={{ color: '#a78bfa' }}>
+                      {ledgerRecords.filter(r => r.paymentالحالة === 'PAID').length}
                     </strong></span>
                   </div>
                 )}

@@ -36,14 +36,14 @@ const customStack = backend.createStack('MessagingInfrastructure');
 // ── SQS: Outbound broadcast buffer ───────────────────────────────────────────
 // Visibility timeout (120s) > processOutboundQueue Lambda timeout (60s)
 const outboundMainQueue = new Queue(customStack, 'OutboundBroadcastQueue', {
-  queueName: 'outbound-broadcast-queue',
+  queueName: 'pushnot-outbound-broadcast-queue',
   visibilityTimeout: Duration.seconds(120),
 });
 
 // ── SQS: Inbound chat queue (text replies → chatAgent) ────────────────────────
 // Visibility timeout (90s) > chatAgent Lambda timeout (60s)
 const inboundChatQueue = new Queue(customStack, 'InboundChatQueue', {
-  queueName: 'inbound-chat-queue',
+  queueName: 'pushnot-inbound-chat-queue',
   visibilityTimeout: Duration.seconds(90),
 });
 

@@ -236,25 +236,25 @@ export default function CampaignsView({ associationId }: CampaignsViewProps) {
       {/* ── Campaign creation form ── */}
       <div className="panel" style={{ flex: '0 0 auto', overflow: 'visible' }}>
         <h2 style={{ margin: '0 0 16px', fontSize: '18px', fontWeight: 700, color: '#f1f5f9' }}>
-          Create New Campaign
+          إنشاء حملة جديدة
         </h2>
         <form onSubmit={handleCreateCampaign} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div>
-            <label>Campaign Title</label>
+            <label>عنوان الحملة</label>
             <input type="text" placeholder="e.g., Back to School 2024" value={title}
               onChange={e => setTitle(e.target.value)} disabled={isSubmitting} />
           </div>
           <div>
-            <label>Outreach Description (Template Variable: {`{{2}}`})</label>
+            <label>نص الرسالة (متغير القالب: {`{{2}}`})</label>
             <textarea rows={3} placeholder="Message content sent via WhatsApp…" value={description}
               onChange={e => setDescription(e.target.value)} disabled={isSubmitting}
               style={{ width: '100%', padding: '8px 12px', fontFamily: 'inherit' }} />
           </div>
           <div>
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              AI Knowledge Context
+              سياق المعرفة للذكاء الاصطناعي
               <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 400 }}>
-                (optional — injected into the Bedrock prompt when members ask about this campaign)
+                (اختياري — يُحقن في نموذج Bedrock عند استفسار الأعضاء)
               </span>
             </label>
             <textarea rows={3}
@@ -274,11 +274,11 @@ export default function CampaignsView({ associationId }: CampaignsViewProps) {
               <button type='button' onClick={() => campaignFileRef.current?.click()}
                 style={{ padding: '4px 12px', fontSize: '12px', background: 'none',
                   border: '1px solid #334155', borderRadius: '4px', color: '#94a3b8', cursor: 'pointer' }}>
-                📄 Load from .txt file
+                📄 تحميل من ملف .txt
               </button>
-              {ctxUploadStatus === 'uploading' && <span style={{ fontSize: '12px', color: '#64748b' }}>Uploading…</span>}
-              {ctxUploadStatus === 'done'      && <span style={{ fontSize: '12px', color: '#34d399' }}>✓ Campaign context uploaded</span>}
-              {ctxUploadStatus === 'error'     && <span style={{ fontSize: '12px', color: '#f87171' }}>✗ Upload failed</span>}
+              {ctxUploadStatus === 'uploading' && <span style={{ fontSize: '12px', color: '#64748b' }}>جارٍ الرفع…</span>}
+              {ctxUploadStatus === 'done'      && <span style={{ fontSize: '12px', color: '#34d399' }}>✓ تم رفع سياق الحملة</span>}
+              {ctxUploadStatus === 'error'     && <span style={{ fontSize: '12px', color: '#f87171' }}>✗ فشل الرفع</span>}
             </div>
           </div>
           <div className="form-grid-3col">

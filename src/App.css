@@ -11,16 +11,54 @@ html, body, #root {
   height: 100%;
   width: 100%;
   font-size: 16px; /* base bump — all rem units scale from here */
+  direction: rtl;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: 'Segoe UI', 'Cairo', 'Tajawal', -apple-system, BlinkMacSystemFont,
+    'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans',
+    'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: #0f172a;
   color: #e2e8f0;
+  text-align: right;
+}
+
+/* ── RTL overrides ── */
+/* Header: logo on right, sign-out on left */
+.app-header {
+  flex-direction: row-reverse;
+}
+
+/* Tab nav: sits on left side (visually) in RTL */
+.tab-nav {
+  margin-right: 0;
+  margin-left: auto;
+}
+
+/* Labels always right-aligned */
+label {
+  display: block;
+  text-align: right;
+}
+
+/* Table cells default right */
+th, td {
+  text-align: right;
+}
+
+/* Inputs, selects, textareas — text flows right-to-left */
+input, select, textarea {
+  direction: rtl;
+  text-align: right;
+}
+
+/* Monospace values (IDs, keys) stay LTR so they don't reverse */
+code, .ltr-value {
+  direction: ltr;
+  display: inline-block;
+  unicode-bidi: embed;
 }
 
 /* =====================================================================

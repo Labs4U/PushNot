@@ -125,7 +125,7 @@ function AppShell({ userId, userEmail, signOut }: AppShellProps) {
       <div className="profile-gate">
         <div className="profile-gate-card">
           <div className="profile-gate-spinner" />
-          <p className="profile-gate-text">Verifying your account…</p>
+          <p className="profile-gate-text">جارٍ التحقق من حسابك…</p>
         </div>
       </div>
     );
@@ -135,14 +135,14 @@ function AppShell({ userId, userEmail, signOut }: AppShellProps) {
     return (
       <div className="profile-gate">
         <div className="profile-gate-card profile-gate-card--error">
-          <p className="profile-gate-title">Setup Failed</p>
+          <p className="profile-gate-title">فشل الإعداد</p>
           <p className="profile-gate-text">{profileError}</p>
           <button
             className="btn-sign-out"
             style={{ marginTop: '16px' }}
             onClick={signOut}
           >
-            Sign Out &amp; Retry
+            تسجيل الخروج والمحاولة مجدداً
           </button>
         </div>
       </div>
@@ -151,35 +151,35 @@ function AppShell({ userId, userEmail, signOut }: AppShellProps) {
 
   // profileStatus === 'ready' — full dashboard
   return (
-    <div className="app">
+    <div className="app" dir="rtl">
       {/* ── Header ── */}
       <div className="app-header">
-        <div className="app-title">📢 Push Notification Dashboard</div>
+        <div className="app-title">📢 لوحة إشعارات واتساب</div>
 
         <nav className="tab-nav">
           <button
             className={`tab-button ${activeTab === 'messages' ? 'active' : ''}`}
             onClick={() => setActiveTab('messages')}
           >
-            Messages
+            الرسائل
           </button>
           <button
             className={`tab-button ${activeTab === 'campaigns' ? 'active' : ''}`}
             onClick={() => setActiveTab('campaigns')}
           >
-            Campaigns
+            الحملات
           </button>
           <button
             className={`tab-button ${activeTab === 'analytics' ? 'active' : ''}`}
             onClick={() => setActiveTab('analytics')}
           >
-            Analytics
+            التحليلات
           </button>
           <button
             className={`tab-button ${activeTab === 'bills' ? 'active' : ''}`}
             onClick={() => setActiveTab('bills')}
           >
-            Billing
+            الفواتير
           </button>
 
           {/* Separator + Settings — visually distinct from operational tabs */}
@@ -189,7 +189,7 @@ function AppShell({ userId, userEmail, signOut }: AppShellProps) {
             onClick={() => setActiveTab('settings')}
             title="Association Settings"
           >
-            ⚙️ Settings
+            ⚙️ الإعدادات
           </button>
         </nav>
 
@@ -201,7 +201,7 @@ function AppShell({ userId, userEmail, signOut }: AppShellProps) {
             </span>
           )}
           <button className="btn-sign-out" onClick={signOut}>
-            Sign Out
+            تسجيل الخروج
           </button>
         </div>
       </div>

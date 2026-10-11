@@ -54,6 +54,7 @@ const schema = a.schema({
     type: a.string(),          // 'ANNOUNCEMENT', 'FUNDRAISER'
     targetAmount: a.float(),   // Overall campaign goal
     recipientCount: a.integer(),
+    aiKnowledgeContext: a.string(), // Campaign-specific FAQ text injected into chatAgent system prompt
 
     // --- 7. Campaign Run (Target/Ledger) Attributes ---
     deliveryStatus: a.string(),// 'QUEUED', 'SENT', 'DELIVERED', 'READ'
